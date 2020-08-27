@@ -27,7 +27,7 @@ Arkproxy 是高性能、高可靠的数据库中间件，由极数云舟出品�
 
 ```
 # 适用于 centos7/x86_64 系统
-curl -sL -o /usr/local/bin/arkproxy https://github.com/arkdb/arkproxy/tree/master/arkproxy.cnf.example
+curl -sL -o /usr/local/bin/arkproxy https://github.com/arkdb/arkproxy/releases/download/v20.06.30/arkproxy
 chmod +x /usr/local/bin/arkproxy
 ```
 
@@ -44,7 +44,9 @@ yum install cmake git gcc gcc-c++ bison rpm-build \
 # 2. 依赖库
 git clone git@github.com:edenhill/librdkafka.git
 cd librdkafka
-./configure --install-deps --source-deps-only  --disable-gssapi --disable-sasl --disable-zstd --enable-static  && make &&  make install
+./configure --install-deps --source-deps-only --disable-gssapi --disable-sasl \
+  --disable-zstd --enable-static
+make && make install
 
 # 3. 编译 Arkproxy
 git clone git@github.com:arkdb/arkproxy.git
@@ -60,7 +62,7 @@ install -v out/sql/arkproxy /usr/local/bin/arkproxy
 
   注：
 
-  1) 请按需修改配置文件 `/etc/arkproxy.cnf`，根据实际环境情况替换 proxy_backend_user、proxy_backend_passwd、backend_host、backend_port 以及各节点的路由类型，可参考详细的配置参数
+  1) 请按需修改配置文件 `/etc/arkproxy.cnf`，根据实际环境情况替换 proxy_backend_user、proxy_backend_passwd、backend_host、backend_port 以及各节点的路由类型，可参考[详细的配置参数](https://github.com/arkdb/arkproxy/wiki/配置参数说明)
 
   2) 同一类型的路由，不能设置多次，比如 readonly，只能有一个配置区块，如果对应多个 Server，则可以将多个Server的名字写到 router_servers 中，逗号分隔放在一行。
 
@@ -79,7 +81,7 @@ install -v out/sql/arkproxy /usr/local/bin/arkproxy
 
 - 业务访问：(DEV/应用程序)：`mysql -uarkproxy -parkproxy -P3336 -h10.0.0.134 -A`
 
-- Arkproxy 管理(DBA/管理员): `mysql -uproxyshell -ppassword -P3335 -h10.0.0.134 -A`
+- Arkproxy 管理(DBA/管理员): `mysql -uproxyshell -ppassword -P3335 -h10.0.0.134 -A` ， 输入 `config help` 可看到支持的指令列表，[详细的指令说明](https://github.com/arkdb/arkproxy/wiki/管理端命令)
 
 
 
