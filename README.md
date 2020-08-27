@@ -50,13 +50,13 @@ cd librdkafka
 git clone git@github.com:arkdb/arkproxy.git
 cd arkproxy
 ./build.sh
-install -v out/mysql/bin/arkproxy /usr/local/bin/arkproxy
+install -v out/sql/arkproxy /usr/local/bin/arkproxy
 ```
 
 ## 使用
 
 
-- 创建配置文件 `curl -sL -o /etc/arkproxy.cnf https://github.com/arkdb/arkproxy/tree/master/arkproxy.cnf.example`
+- 创建配置文件 `curl -sL -o /etc/arkproxy.cnf https://raw.githubusercontent.com/arkdb/arkproxy/master/arkproxy.cnf.example`
 
   注：
 
