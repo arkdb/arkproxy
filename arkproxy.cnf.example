@@ -96,3 +96,4 @@ router_type=readonly
 #有多个路由目标时，以逗号分隔，写在一起
 router_servers=server1,server2,server3
 
+# 注： 同一类型的路由不能设置多次，比如 readonly，只能有一个配置区块，如果有多个 readonly 的 Server，请将其写到 router_servers 中以逗号分隔放在同一行
