@@ -1,0 +1,13 @@
+--source include/have_innodb.inc
+SET storage_engine=innodb;
+--source include/gis_generic.inc
+--source include/gis_keys.inc
+
+#
+# Bug #15680 (SPATIAL key in innodb)
+#
+# MySQL 5.7 Introduces SPATIAL keys for InnoDB
+#--error ER_TABLE_CANT_HANDLE_SPKEYS
+create table t1 (g geometry not null, spatial gk(g)) engine=innodb;
+drop table t1;
+

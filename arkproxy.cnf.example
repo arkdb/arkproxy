@@ -1,0 +1,98 @@
+[arkproxy]
+proxy_backend_passwd    =   arkproxy
+proxy_backend_user      =   arkproxy
+proxy_port              =   3336
+proxy_check_slave_lag_period  = 10
+proxy_config_host =
+proxy_config_passwd =
+proxy_config_port = 0
+proxy_config_user =
+proxy_digest_trace = OFF
+proxy_flush_thread_num = 5
+proxy_format_fullpath = OFF
+proxy_format_num_per_time = 10
+proxy_format_parameterize = ON
+proxy_format_thread_num  = 5
+proxy_general_log = OFF
+proxy_general_log_file = /tmp/proxy.log
+proxy_log_error = /tmp/error.log
+proxy_multi_write_mode = OFF
+proxy_namespace =
+proxy_non_encrypted_ips = 127.0.0.1
+proxy_recv_queue_size = 2000
+proxy_send_queue_size = 100
+proxy_server_address = %
+proxy_server_heartbeat_period = 100
+proxy_shell_listen_port = 3335
+proxy_shell_password = password
+proxy_shell_username = proxyshell
+proxy_sql_trace = OFF
+proxy_sql_trace_thread_num = 5
+proxy_thread_pool_idle_timeout  = 60
+proxy_thread_pool_max_threads   = 65536
+proxy_thread_pool_oversubscribe = 3
+proxy_thread_pool_size          = 200
+proxy_thread_pool_stall_limit   = 500
+proxy_trace_busy_strategy = 0
+proxy_trace_busy_wait_time = 500
+proxy_trace_client_queue_size = 1000
+proxy_trace_flush_thread_sleep_msec = 500
+proxy_trace_format_thread_sleep_msec = 500
+proxy_trace_hash_mem_length = 134217728
+proxy_trace_hash_size = 200
+proxy_trace_max_delay_time    = 3
+proxy_trace_queue_array_length=500
+proxy_trace_sql_bucket_length = 100
+proxy_username_encypted = OFF
+core-file
+
+
+[server1]
+#proxy 类型，表示当前节点类型为 Server
+proxy_type=server
+#数据库地址
+backend_host=10.0.0.145
+#数据库端口
+backend_port=3306
+#路由权重
+weight=40
+#当前节点，如果延迟达到这个值，就会停止前其路由请求
+max_slave_lag= 200
+#节点默认状态，中间层启动之后就是这个状态
+server_status = ONLINE
+#对这个节点的注释
+config_comment = day day up_server1
+
+[server2]
+proxy_type=server
+backend_host=10.0.0.146
+backend_port=3306
+weight=30
+config_comment = day day up_server2
+
+[server3]
+proxy_type=server
+backend_host=10.0.0.147
+backend_port=3306
+weight=30
+config_comment = day day up_server3
+
+
+#路由设置
+[router1]
+#proxy 类型，当前配置节点为路由节点
+proxy_type=router
+#路由类型:readwrite，读写节点
+router_type=readwrite
+#配置路由 db
+router_servers=server1
+#路由注释
+config_comment = read_writer server
+
+[router2]
+proxy_type=router
+#只读路由
+router_type=readonly
+#有多个路由目标时，以逗号分隔，写在一起
+router_servers=server1,server2,server3
+

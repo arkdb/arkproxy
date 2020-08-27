@@ -1,0 +1,33 @@
+--source include/have_debug.inc
+--source include/not_embedded.inc
+
+if (!$ADT_NULL_SO) {
+  skip No NULL_AUDIT plugin;
+}
+
+set @old_dbug=@@debug_dbug;
+call mtr.add_suppression("Index for table.*mysql.plugin.MYI");
+call mtr.add_suppression("Index for table 'plugin' is corrupt; try to repair it");
+
+#
+# MySQL BUG#14485479 - INSTALL AUDIT PLUGIN HANGS IF WE TRY TO DISABLE AND ENABLED DURING DDL OPERATION
+# (a.k.a. audit event caused by the table access during audit plugin initialization)
+#
+SET debug_dbug='+d,myisam_pretend_crashed_table_on_usage';
+--replace_result \\ /
+--error 126
+install plugin audit_null soname 'adt_null';
+SET debug_dbug=@old_dbug;
+
+install plugin audit_null soname 'adt_null';
+SET debug_dbug='+d,myisam_pretend_crashed_table_on_usage';
+--replace_result \\ /
+--error 126
+uninstall plugin audit_null;
+SET debug_dbug=@old_dbug;
+
+--error 1305
+uninstall plugin audit_null;
+
+delete from mysql.plugin where name='audit_null';
+

@@ -1,0 +1,34 @@
+#
+# Test very simply slave replication (to ensure it works at all)
+# In addition, test also:
+# MDEV-5829 STOP SLAVE resets global status variables
+#
+
+source include/master-slave.inc;
+
+create table t1 (n int);
+insert into t1 values(1);
+sync_slave_with_master; 
+show global status like 'com_insert';
+stop slave;
+# Temporary work-around for bug MDEV-8301. There is a small window during
+# thread exit where the local status values of a thread are counted twice
+# in the global status. Remove this wait_condition.inc once MDEV-8301 is
+# fixed.
+--let $wait_condition= SELECT variable_value=1 FROM information_schema.global_status WHERE variable_name="Com_insert";
+--source include/wait_condition.inc
+show global status like 'com_insert';
+--source include/wait_for_slave_to_stop.inc
+start slave;
+--source include/wait_for_slave_to_start.inc
+connection master;
+insert into t1 values(2);
+#let slave catch up
+sync_slave_with_master;
+select * from t1;
+connection master;
+drop table t1;
+sync_slave_with_master;
+
+# End of 4.1 tests
+--source include/rpl_end.inc
