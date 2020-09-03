@@ -26,13 +26,6 @@ Arkproxy 是高性能、高可靠的数据库中间件，由极数云舟出品�
   
 
 
-  
-  
-
-[Arkproxy 介绍](http://www.cloud-ark.com/#/Arkproxy) | [ArkDB介绍](http://www.cloud-ark.com/#/ArkDB) | [关于极数云舟](http://www.cloud-ark.com/#/AboutUs)
-
-  
-
 
 ## 安装
 
@@ -84,7 +77,7 @@ install -v out/sql/arkproxy /usr/local/bin/arkproxy
     - `proxy_backend_user` 和 `proxy_backend_passwd` , 用来连接后端 MySQL 数据库集群的用户名和密码，在后端数据库写节点 grant 授权
     - `proxy_shell_username` 和 `proxy_shell_password` , 在arkproxy.cnf 文件中配置用户和密码，通过其访问Arkproxy管理shell端口
 
-- 在数据库写节点，授权 Arkproxy
+- [构建 ArkDB 数据库集群](http://mirror.cloud-ark.com/public_package/ArkDB/极数云舟_云原生数据库ArkDB用户手册.pdf)或者使用已有的 MySQL 集群，并授权 Arkproxy，（附: ArkDB 的[下载](http://mirror.cloud-ark.com/public_package/ArkDB/ArkDB.tar.gz)和[安装](http://mirror.cloud-ark.com/public_package/ArkDB/极数云舟_云原生数据库ArkDB用户手册.pdf) ）
 
   登录数据库集群写节点执行：
 
