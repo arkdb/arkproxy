@@ -1,0 +1,6 @@
+*.out
+tags
+*.result
+empty.c
+.*
+release*
