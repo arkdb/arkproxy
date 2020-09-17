@@ -4979,7 +4979,7 @@ static Sys_var_mybool Sys_proxy_multi_write_mode(
 
 static Sys_var_mybool Sys_proxy_async_backend_connect(
        "proxy_async_connect_server", "async to connect backend server or not",
-       GLOBAL_VAR(proxy_async_connect_server), CMD_LINE(OPT_ARG), DEFAULT(TRUE),
+       GLOBAL_VAR(proxy_async_connect_server), CMD_LINE(OPT_ARG), DEFAULT(FALSE),
        NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL,NULL, 0, 0);
        
 static Sys_var_double Sys_proxy_net_buffer_outlier_scale(

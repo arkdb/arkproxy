@@ -310,18 +310,42 @@ int mysql_fetch_connection_variables(THD* thd, backend_conn_t* conn)
     DBUG_RETURN(false);
 }
 
-int arkproxy_copy_env(THD* thd, backend_conn_t* conn, char* varname)
+int arkproxy_copy_env(THD* thd, backend_conn_t* conn, set_var* s_var)
 {
     int i;
     backend_conn_t* write_conn;
+    char *varname = (char *)s_var->var->name.str;
+    if (!strcasecmp(varname, "autocommit"))
+    {
+        if (s_var->value && s_var->value->type() == Item::INT_ITEM)
+        {
+            int val = s_var->value->val_int();
+            if (val == 1)
+            {
+                conn->autocommit = true;
+            }
+            else if (val == 0)
+            {
+                conn->autocommit = false;
+            }
+        }
+        else
+        {
+            // handle sql like 'set autocommit = 1-1'
+            mysql_fetch_connection_variables(thd, conn);
+        }
+    }
+    else
+    {
+        return false;
+    }
 
     if (thd->write_conn_count > 0)
     {
         for (i = 0; i < thd->write_conn_count; i++)
         {
             write_conn = thd->write_conn[i];
-            if (!strcasecmp(varname, "autocommit"))
-                write_conn->autocommit = conn->autocommit;
+            write_conn->autocommit = conn->autocommit;
 //            if (!strcasecmp(varname, "wait_timeout"))
 //                write_conn->wait_timeout = conn->wait_timeout;
         }
@@ -332,8 +356,7 @@ int arkproxy_copy_env(THD* thd, backend_conn_t* conn, char* varname)
         for (i = 0; i < thd->read_conn_count; i++)
         {
             write_conn = thd->read_conn[i];
-            if (!strcasecmp(varname, "autocommit"))
-                write_conn->autocommit = conn->autocommit;
+            write_conn->autocommit = conn->autocommit;
 //            if (!strcasecmp(varname, "wait_timeout"))
 //                write_conn->wait_timeout = conn->wait_timeout;
         }
@@ -844,9 +867,8 @@ void set_var_info(THD *thd, set_var_base *var, backend_conn_t* send_conn)
 
             if (env_update_check((char*)s_var->var->name.str))
             {
-                mysql_fetch_connection_variables(thd, send_conn);
                 /* when set the env, then sync this new value to other conns */
-                arkproxy_copy_env(thd, send_conn, (char*)s_var->var->name.str);
+                arkproxy_copy_env(thd, send_conn, s_var);
             }
         }
         else if (!strcasecmp(var->set_var_type, "set_user_var"))
