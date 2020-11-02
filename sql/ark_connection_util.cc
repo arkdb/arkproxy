@@ -690,9 +690,9 @@ void close_thd_env(THD* thd)
 
 void init_backend_conn_info(backend_conn_t* conn, char* host, char* user, char* passwd, uint port)
 {
-    strcpy(conn->host,host);
-    strcpy(conn->user,user);
-    strcpy(conn->passwd,passwd);
+    strncpy(conn->host, host, sizeof(conn->host) - 1);
+    strncpy(conn->user, user, sizeof(conn->user) - 1);
+    strncpy(conn->passwd, passwd, sizeof(conn->passwd) - 1);
     conn->port = port;
     conn->inited = false;
     conn->start_timer = 0;
