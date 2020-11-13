@@ -789,7 +789,7 @@ int proxy_format_to_queue_before(THD* thd)
     return false;
 }
 
-int proxy_format_to_queue_after(THD* thd, ulonglong exe_time, ulonglong affect_rows)
+int proxy_format_to_queue_after(THD* thd, ulonglong exe_time, ulonglong affect_rows, const char* server_name)
 {
     if (thd->trace_queue == NULL)
         return true;
@@ -807,6 +807,7 @@ int proxy_format_to_queue_after(THD* thd, ulonglong exe_time, ulonglong affect_r
         node->state = TRACE_NODE_FULL;
         thd->trace_queue->enqueue_index = (thd->trace_queue->enqueue_index + 1) % 
           thd->trace_queue->queue_size;
+        strcpy(node->route_server_name, server_name);
     }
 
     return false;
@@ -908,6 +909,7 @@ retry:
         strcpy(trace_node_local->username, trace_node->username);
         strcpy(trace_node_local->dbname, trace_node->dbname);
         strcpy(trace_node_local->hash_key, trace_node->hash_key);
+        strcpy(trace_node_local->route_server_name, trace_node->route_server_name);
         trace_node_local->first_seen = my_hrtime().val;
         trace_node_local->last_seen = trace_node_local->first_seen;
         trace_node_local->count = 1;
@@ -1012,6 +1014,7 @@ retry:
         strcpy(trace_node_local->username, trace_node->username);
         strcpy(trace_node_local->dbname, trace_node->dbname);
         strcpy(trace_node_local->hash_key, trace_node->hash_key);
+        strcpy(trace_node_local->route_server_name, trace_node->route_server_name);
         trace_node_local->first_seen = my_hrtime().val;
         trace_node_local->last_seen = trace_node_local->first_seen;
         trace_node_local->count = 1;
@@ -1376,6 +1379,7 @@ proxy_create_sql_table()
     str_append(&str_sql, "affect_rows bigint not null comment 'affect rows', ");
     str_append(&str_sql, "appear_ts bigint not null comment 'appear timestamp', ");
     str_append(&str_sql, "exe_time bigint not null comment 'sum of sql time', ");
+    str_append(&str_sql, "route_server_name varchar(65) not null comment 'route server name', ");
     str_append(&str_sql, "primary key (id))");
     str_append(&str_sql, "engine innodb comment 'origin sql table'");
     
@@ -1484,7 +1488,7 @@ int proxy_trace_sql_flush(format_cache_node_t* trace_node, str_t* digest, MYSQL*
     str_append(digest, dbname);
     str_append(digest, ".query_sql (schemaname, client_ip, username, "
         "sql_key, digest, origin_sql,"
-        "affect_rows, appear_ts, exe_time) VALUES(");
+        "affect_rows, appear_ts, exe_time, route_server_name) VALUES(");
     str_append(digest, "\'");
     str_append(digest, trace_node->dbname);
     str_append(digest, "\',");
@@ -1525,8 +1529,11 @@ int proxy_trace_sql_flush(format_cache_node_t* trace_node, str_t* digest, MYSQL*
     str_append(digest, dbname);
     sprintf(dbname, "%llu,", trace_node->first_seen);
     str_append(digest, dbname);
-    sprintf(dbname, "%llu)", trace_node->max_time);
+    sprintf(dbname, "%llu,", trace_node->max_time);
     str_append(digest, dbname);
+    str_append(digest, "\'");
+    str_append(digest, trace_node->route_server_name);
+    str_append(digest, "\')");
 
     if (mysql_real_query(conn, str_get(digest), str_get_len(digest)))
     {

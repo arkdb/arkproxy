@@ -1413,7 +1413,7 @@ int mysql_push_execute_queue(THD* thd, backend_conn_t* conn)
     {
         set_ark_env(thd, conn);
         if (proxy_digest_on(thd) && thd->get_command() == COM_QUERY)
-            proxy_format_to_queue_after(thd, (exe_time_2 - exe_time_1), affect_rows);
+            proxy_format_to_queue_after(thd, (exe_time_2 - exe_time_1), affect_rows, conn->server->server_name);
 #if __CONSISTEND_READ__
         proxy_consistend_cache_update_global(thd, conn);
 #endif 

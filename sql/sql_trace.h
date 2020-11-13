@@ -1,7 +1,7 @@
 #include "sql_class.h"
 
 int proxy_format_to_queue_before(THD* thd);
-int proxy_format_to_queue_after(THD* thd, ulonglong exe_time, ulonglong affect_rows);
+int proxy_format_to_queue_after(THD* thd, ulonglong exe_time, ulonglong affect_rows, const char* server_name);
 unsigned long long md5_16_int(char* source);
 int proxy_trace_cache_init();
 int proxy_sql_trace_init();

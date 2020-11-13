@@ -585,7 +585,7 @@ struct format_cache_node_struct
 
     uint64_t digest;
     int                 rule_logged;
-
+    char                route_server_name[MAX_HOSTNAME];
     LIST_NODE_T(format_cache_node_t)         link;
 };
 

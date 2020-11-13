@@ -3667,7 +3667,7 @@ bool Prepared_statement::prepare(const char *packet, uint packet_len)
   proxy_dispatch_query(thd);
 
   if (proxy_digest_on(thd))
-      proxy_format_to_queue_after(thd, 0, 0);
+      proxy_format_to_queue_after(thd, 0, 0, thd->last_conn ? thd->last_conn->server->server_name : "");
 
   // if (error == 0)
   //   error= check_prepared_statement(this);

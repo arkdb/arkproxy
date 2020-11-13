@@ -698,7 +698,9 @@ void init_backend_conn_info(backend_conn_t* conn, char* host, char* user, char* 
     conn->start_timer = 0;
     conn->env_version = 0;
     close_backend_conn(conn);
+#if __CONSISTEND_READ__
     conn->consistend_cache = NULL;
+#endif
 }
 
 void init_cluster_fixed_conn(THD* thd)
@@ -1283,7 +1285,9 @@ add_write_connection(
     conn->server = server;
     conn->env_version = 0;
     conn->current_weight = 0;
+#if __CONSISTEND_READ__
     conn->consistend_cache = NULL;
+#endif
     return conn;
 }
 
