@@ -715,6 +715,7 @@ void init_cluster_fixed_conn(THD* thd)
             server_node = server->server;
             init_backend_conn_info(conn, server_node->backend_host, backend_user,
                                    backend_passwd, server_node->backend_port);
+            break;
         }
 
         server = LIST_GET_NEXT(link, server);

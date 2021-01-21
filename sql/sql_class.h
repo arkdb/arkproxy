@@ -228,6 +228,7 @@ struct proxy_server_struct
 {
     proxy_servers_t* server;
     proxy_router_t* route;
+    int build_connection; /* need to route */
     LIST_NODE_T(proxy_server_t) link;
 };
 

@@ -94,6 +94,7 @@ int proxy_router_type(THD* thd)
 int proxy_connect_new_server(THD* thd)
 {
     proxy_server_t* server;
+    proxy_server_t* server_next;
     proxy_servers_t* server_backend;
     Security_context *sctx= thd->security_ctx;
     int i;
@@ -105,6 +106,7 @@ int proxy_connect_new_server(THD* thd)
     server = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
     while (server)
     {
+        server_next = LIST_GET_NEXT(link, server);
         for (i=0; i< thd->read_conn_count; ++i)
         {
             conn = thd->read_conn[i];
@@ -123,33 +125,31 @@ int proxy_connect_new_server(THD* thd)
         /* if the server is not existed, add it and reconnect */
         if (conn && server->server->server_status == SERVER_STATUS_ONLINE)
         {
-            if (server->server->reconnect)
+            if (server->server->reconnect || server->build_connection)
             {
                 if (proxy_reconnect_server(thd, conn))
                 {
-                    sql_print_warning("Connecting the read server (%s, %d) which "
-                        "to set online failed: '%s'", server->server->backend_host, 
-                        server->server->backend_port, thd->get_stmt_da()->message());
-                    login_failed_error(thd);
-                    return true;
+                    server = server_next;
+                    // login_failed_error(thd);
+                    continue;
+                    // return true;
                 }
                 else
                 {
                     sql_print_warning("Reconnecting the read server (%s, %d) successfully" ,
                         server->server->backend_host, server->server->backend_port);
+                    server->build_connection = false;
                 }
-
-                //server->server->reconnect = false;
             }
-
         }
 
-        server = LIST_GET_NEXT(link, server);
+        server = server_next;
     }
 
     server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server)
     {
+        server_next = LIST_GET_NEXT(link, server);
         for (i=0; i< thd->write_conn_count; ++i)
         {
             conn = thd->write_conn[i];
@@ -166,27 +166,25 @@ int proxy_connect_new_server(THD* thd)
         /* if the server is not existed, add it and reconnect */
         if (conn && server->server->server_status == SERVER_STATUS_ONLINE)
         {
-            if (server->server->reconnect)
+            if (server->server->reconnect || server->build_connection)
             {
                 if (proxy_reconnect_server(thd, conn))
                 {
-                    sql_print_warning("Connecting the write server (%s, %d) which "
-                        "to set online failed: '%s'", server->server->backend_host, 
-                        server->server->backend_port, thd->get_stmt_da()->message());
-                    login_failed_error(thd);
-                    return true;
+                    server = server_next;
+                    //login_failed_error(thd);
+                    continue;
+                    // return true;
                 }
                 else
                 {
                     sql_print_warning("Reconnecting the write server (%s, %d) successfully" ,
                         server->server->backend_host, server->server->backend_port);
+                    server->build_connection = false;
                 }
-
-                //server->server->reconnect = false;
             }
         }
 
-        server = LIST_GET_NEXT(link, server);
+        server = server_next;
     }
 
     server_backend = LIST_GET_FIRST(global_proxy_config.server_lst);

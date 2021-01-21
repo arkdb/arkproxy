@@ -2319,6 +2319,17 @@ config_proxy:
           strcpy(thd->config_ele->server_name, $5.str);
           thd->config_ele->type = $3;
         }
+        | CONFIG_SYM ADD ROUTE_SYM route_type SERVER_SYM ident
+        {
+          LEX *lex= thd->lex;
+          Lex->sql_command= SQLCOM_CONFIG;
+          Lex->sub_command= CFG_ADD_ROUTE;
+          if (!thd->config_ele)
+              thd->config_ele = (config_element_t*)my_malloc(
+              sizeof(config_element_t), MY_ZEROFILL);
+          strcpy(thd->config_ele->server_name, $6.str);
+          thd->config_ele->type = $4;
+        }
         | CONFIG_SYM DELETE_SYM SERVER_SYM ident
         {
             LEX *lex= thd->lex;

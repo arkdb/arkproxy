@@ -76,6 +76,7 @@ static help_t HELP_INFO[] =
     {(char*)"config reload", (char*)"将外部配置文件中的内容reload到内存。"
       "当手动修改配置文件中之后，可以通过config reload让其生效。"},
     {(char*)"config set server {servername} online/offline", (char*)"将指定server上下线"},
+    {(char*)"config add route {read|write} server {servername}", (char*)"新增某个server的读写角色"},
     {(char*)"show backend servers", (char*)"查看后端配置数据库的状态"},
     {(char*)"show backend connections", (char*)"查看ArkProxy链接后端的信息"},
     {(char*)"show user config list", (char*)"可以查看配置user的信息"},
@@ -253,6 +254,96 @@ int proxy_config_add_rule(THD* thd)
     my_ok(thd);
 
     return false;
+}
+
+int proxy_config_add_route(THD* thd)
+{
+    config_element_t* config_ele = NULL;
+    config_element_t* ele = NULL;
+    char tmp[1024];
+    proxy_server_t* server;
+    proxy_servers_t* server_real;
+
+    if (thd->config_cache == NULL)
+    {
+        thd->config_cache = (config_cache_t*)my_malloc(sizeof(config_cache_t), MY_ZEROFILL);
+        LIST_INIT(thd->config_cache->config_lst);
+    }
+
+    config_ele = thd->config_ele;
+
+    ele = LIST_GET_FIRST(thd->config_cache->config_lst);
+    while (ele)
+    {
+        if (ele->sub_command == CFG_ADD_ROUTE)
+        {
+            if (!strcasecmp(config_ele->server_name, ele->server_name) &&
+                config_ele->type == ele->type)
+            {
+                sprintf(tmp, "Server '%s' route '%s' to have existed", 
+                    ele->server_name, ele->type == ROUTER_TYPE_RW ? "write" : "read");
+                my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+                return true;
+            }
+        }
+
+        ele = LIST_GET_NEXT(link, ele);
+    }
+
+    server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
+    while (server)
+    {
+        if ((ulong)server->route->router_type == config_ele->type &&
+            !strcasecmp(server->server->server_name, config_ele->server_name))
+        {
+            sprintf(tmp, "Server '%s' route 'write' to have existed", config_ele->server_name);
+            my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+            return true;
+        }
+
+        server = LIST_GET_NEXT(link, server);
+    }
+    
+    server = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+    while (server)
+    {
+        if ((ulong)server->route->router_type == config_ele->type &&
+            !strcasecmp(server->server->server_name, config_ele->server_name))
+        {
+            sprintf(tmp, "Server '%s' route 'read' to have existed", config_ele->server_name);
+            my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+            return true;
+        }
+
+        server = LIST_GET_NEXT(link, server);
+    }
+
+    server_real = LIST_GET_FIRST(global_proxy_config.server_lst);
+    while (server_real)
+    {
+        if (!strcasecmp(server_real->server_name, config_ele->server_name))
+        {
+            break;
+        }
+
+        server_real = LIST_GET_NEXT(link, server_real);
+    }
+
+    if (server_real == NULL)
+    {
+        sprintf(tmp, "Server '%s' have not existed", config_ele->server_name);
+        my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+        return true;
+    }
+
+    config_ele->sequence = ++thd->config_sequence;
+    config_ele->sub_command = thd->lex->sub_command;
+    str_init(&config_ele->config_command);
+    str_append_with_length(&config_ele->config_command, thd->query(), thd->query_length());
+    LIST_ADD_LAST(link, thd->config_cache->config_lst, config_ele);
+    thd->config_ele = NULL;
+    my_ok(thd);
+    return true;
 }
 
 int proxy_config_add_server(THD* thd)
@@ -1134,6 +1225,68 @@ int proxy_add_rule(THD* thd, config_element_t* ele)
     return false;
 }
 
+int proxy_add_route(THD* thd, config_element_t* ele)
+{
+    proxy_router_t* router;
+    proxy_servers_t* server;
+
+    server = LIST_GET_FIRST(global_proxy_config.server_lst);
+    while (server)
+    {
+        if (!strcasecmp(server->server_name, ele->server_name))
+            break;
+
+        server = LIST_GET_NEXT(link, server);
+    }
+
+    router = LIST_GET_FIRST(global_proxy_config.router_lst);
+    while (router)
+    {
+        if (ele->type == ROUTER_TYPE_RO && router->router_type == ROUTER_TYPE_RO)
+        {
+            proxy_server_t* server2 =
+                (proxy_server_t*)my_malloc(sizeof(proxy_server_t), MY_ZEROFILL);
+            server2->server = server;
+            LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, server2);
+            server2->route = router;
+            server2->build_connection = true;
+            server->routed = true;
+            break;
+        }
+        else if (ele->type == ROUTER_TYPE_RW && router->router_type == ROUTER_TYPE_RW)
+        {
+            proxy_server_t* server2 =
+                (proxy_server_t*)my_malloc(sizeof(proxy_server_t), MY_ZEROFILL);
+            server2->server = server;
+            LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, server2);
+            server2->route = router;
+            server2->build_connection = true;
+            server->routed = true;
+            break;
+        }
+
+        router = LIST_GET_NEXT(link, router);
+    }
+
+    if (router == NULL)
+    {
+        proxy_server_t* server2 =
+            (proxy_server_t*)my_malloc(sizeof(proxy_server_t), MY_ZEROFILL);
+        server2->server = server;
+        if (ele->type == ROUTER_TYPE_RO)
+            LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, server2);
+        else if (ele->type == ROUTER_TYPE_RW)
+            LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, server2);
+
+        server2->route = router;
+        server2->build_connection = true;
+        server->routed = true;
+    }
+
+    global_proxy_config.config_version++;
+    return false;
+}
+
 int proxy_add_server(THD* thd, config_element_t* ele)
 {
     proxy_router_t* router;
@@ -1487,6 +1640,9 @@ int proxy_config_flush_low(THD* thd, config_element_t* ele)
     case CFG_CMD_OFFLINE_SERVER:
         return proxy_set_server_status(thd, ele);
     case CFG_CMD_RELOAD:
+        break;
+    case CFG_ADD_ROUTE:
+        proxy_add_route(thd, ele);
         break;
     case CFG_ADD_SERVER:
         return proxy_add_server(thd, ele);
@@ -1932,10 +2088,19 @@ void proxy_show_config_cache(THD *thd)
                 str_append(str, tmp);
                 str_append(str, "\"");
                 str_append(str, "}");
-                protocol->store(str_get(str), system_charset_info);
+                protocol->store(str_get(str), str_get_len(str), system_charset_info);
                 protocol->store("NULL", system_charset_info);
                 protocol->write();
 
+            }
+            else if (ele->sub_command == CFG_ADD_ROUTE)
+            {
+                protocol->store((ulonglong) ele->sequence);
+                protocol->store("ADD_ROUTE", system_charset_info);
+                protocol->store(ele->server_name, system_charset_info);
+                protocol->store("NULL", system_charset_info);
+                protocol->store(str_get(&ele->config_command), str_get_len(&ele->config_command), system_charset_info);
+                protocol->write();
             }
             else if (ele->sub_command == CFG_DELETE_SERVER)
             {
@@ -3064,6 +3229,9 @@ int proxy_set_threads_reconfig(THD* thd)
         break;
     case CFG_ADD_SERVER:
         proxy_config_add_server(thd);
+        break;
+    case CFG_ADD_ROUTE:
+        proxy_config_add_route(thd);
         break;
     case CFG_DELETE_SERVER:
         proxy_config_delete_server(thd);
