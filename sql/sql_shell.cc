@@ -76,7 +76,7 @@ static help_t HELP_INFO[] =
     {(char*)"config reload", (char*)"将外部配置文件中的内容reload到内存。"
       "当手动修改配置文件中之后，可以通过config reload让其生效。"},
     {(char*)"config set server {servername} online/offline", (char*)"将指定server上下线"},
-    {(char*)"config add route {read|write} server {servername}", (char*)"新增某个server的读写角色"},
+    {(char*)"config {add|delete|online|offline} route {read|write} server {servername}", (char*)"新增某个server的读写角色"},
     {(char*)"show backend servers", (char*)"查看后端配置数据库的状态"},
     {(char*)"show backend connections", (char*)"查看ArkProxy链接后端的信息"},
     {(char*)"show user config list", (char*)"可以查看配置user的信息"},
@@ -109,7 +109,7 @@ static help_t HELP_INFO[] =
     {(char*)"config trace cache create", (char*)"用来创建digest cache，此时不会去创建sql cache"},
     {(char*)"config trace sql cache close", (char*)"用来销毁sql cache，不会销毁digest cache"},
     {(char*)"config trace cache close", (char*)"用来销毁digest cache，同时会销毁sql cache"},
-    {(char*)"config [add|delete|update] rule {[rule_id|active|username|schemaname|client_addr|proxy_addr|proxy_port|digest|match_digest|match_pattern|negate_match_pattern|re_modifiers|replace_pattern|destination|timeout|error_msg|log|comment] = value}...", (char*)"用来增加、修改、删除rule"},
+    {(char*)"config {add|delete|update} rule {[rule_id|active|username|schemaname|client_addr|proxy_addr|proxy_port|digest|match_digest|match_pattern|negate_match_pattern|re_modifiers|replace_pattern|destination|timeout|error_msg|log|comment] = value}...", (char*)"用来增加、修改、删除rule"},
     {NULL, NULL},
 };
 
@@ -256,6 +256,207 @@ int proxy_config_add_rule(THD* thd)
     return false;
 }
 
+int proxy_config_onoffline_route(THD* thd)
+{
+    config_element_t* config_ele = NULL;
+    config_element_t* ele = NULL;
+    char tmp[1024];
+    proxy_server_t* server;
+    proxy_servers_t* server_real;
+
+    if (thd->config_cache == NULL)
+    {
+        thd->config_cache = (config_cache_t*)my_malloc(sizeof(config_cache_t), MY_ZEROFILL);
+        LIST_INIT(thd->config_cache->config_lst);
+    }
+
+    config_ele = thd->config_ele;
+
+    ele = LIST_GET_FIRST(thd->config_cache->config_lst);
+    while (ele)
+    {
+        if (ele->sub_command == CFG_ONOFFLINE_ROUTE)
+        {
+            if (!strcasecmp(config_ele->server_name, ele->server_name) &&
+                config_ele->type == ele->type)
+            {
+                sprintf(tmp, "Server '%s' route '%s' setting have existed", 
+                    ele->server_name, ele->type == ROUTER_TYPE_RW ? "write" : "read");
+                my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+                return true;
+            }
+        }
+
+        ele = LIST_GET_NEXT(link, ele);
+    }
+
+    if (config_ele->type == ROUTER_TYPE_RW)
+    {
+        server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
+        while (server)
+        {
+            if ((ulong)server->route->router_type == config_ele->type &&
+                !strcasecmp(server->server->server_name, config_ele->server_name))
+                break;
+
+            server = LIST_GET_NEXT(link, server);
+        }
+        if (server == NULL)
+        {
+            sprintf(tmp, "Server '%s' route 'read' not existed", config_ele->server_name);
+            my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+            return true;
+        }
+    }
+
+    if (config_ele->type == ROUTER_TYPE_RO)
+    {
+        server = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+        while (server)
+        {
+            if ((ulong)server->route->router_type == config_ele->type &&
+                !strcasecmp(server->server->server_name, config_ele->server_name))
+                break;
+
+            server = LIST_GET_NEXT(link, server);
+        }
+
+        if (server == NULL)
+        {
+            sprintf(tmp, "Server '%s' route 'read' not existed", config_ele->server_name);
+            my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+            return true;
+        }
+    }
+
+    server_real = LIST_GET_FIRST(global_proxy_config.server_lst);
+    while (server_real)
+    {
+        if (!strcasecmp(server_real->server_name, config_ele->server_name))
+        {
+            break;
+        }
+
+        server_real = LIST_GET_NEXT(link, server_real);
+    }
+
+    if (server_real == NULL)
+    {
+        sprintf(tmp, "Server '%s' have not existed", config_ele->server_name);
+        my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+        return true;
+    }
+
+    config_ele->sequence = ++thd->config_sequence;
+    config_ele->sub_command = thd->lex->sub_command;
+    str_init(&config_ele->config_command);
+    str_append_with_length(&config_ele->config_command, thd->query(), thd->query_length());
+    LIST_ADD_LAST(link, thd->config_cache->config_lst, config_ele);
+    thd->config_ele = NULL;
+    my_ok(thd);
+    return true;
+}
+
+int proxy_config_delete_route(THD* thd)
+{
+    config_element_t* config_ele = NULL;
+    config_element_t* ele = NULL;
+    char tmp[1024];
+    proxy_server_t* server;
+    proxy_servers_t* server_real;
+    int can_delete = false;
+
+    if (thd->config_cache == NULL)
+    {
+        thd->config_cache = (config_cache_t*)my_malloc(sizeof(config_cache_t), MY_ZEROFILL);
+        LIST_INIT(thd->config_cache->config_lst);
+    }
+
+    config_ele = thd->config_ele;
+
+    ele = LIST_GET_FIRST(thd->config_cache->config_lst);
+    while (ele)
+    {
+        if (ele->sub_command == CFG_DELETE_ROUTE)
+        {
+            if (!strcasecmp(config_ele->server_name, ele->server_name) &&
+                config_ele->type == ele->type)
+            {
+                sprintf(tmp, "Server '%s' route '%s' have deleted", 
+                    ele->server_name, ele->type == ROUTER_TYPE_RW ? "write" : "read");
+                my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+                return true;
+            }
+        }
+
+        ele = LIST_GET_NEXT(link, ele);
+    }
+
+    if (config_ele->type == ROUTER_TYPE_RW)
+    {
+        server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
+        while (server)
+        {
+            if ((ulong)server->route->router_type == config_ele->type &&
+                !strcasecmp(server->server->server_name, config_ele->server_name))
+                break;
+
+            server = LIST_GET_NEXT(link, server);
+        }
+    }
+    else 
+    {
+        server = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+        while (server)
+        {
+            if ((ulong)server->route->router_type == config_ele->type &&
+                !strcasecmp(server->server->server_name, config_ele->server_name))
+                break;
+
+            server = LIST_GET_NEXT(link, server);
+        }
+    }
+
+    if (server == NULL)
+    {
+        sprintf(tmp, "Server '%s' route '%s' not exists", 
+            config_ele->server_name, config_ele->type == ROUTER_TYPE_RW ? "write" : "read");
+        my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+        return true;
+    }
+
+    server_real = LIST_GET_FIRST(global_proxy_config.server_lst);
+    while (server_real)
+    {
+        if (!strcasecmp(server_real->server_name, config_ele->server_name))
+        {
+            if ((config_ele->type == ROUTER_TYPE_RO && server_real->noread_routed) ||
+                (config_ele->type == ROUTER_TYPE_RW && server_real->nowrite_routed))
+                can_delete = true;
+            break;
+        }
+
+        server_real = LIST_GET_NEXT(link, server_real);
+    }
+
+    if (server_real == NULL || can_delete == false)
+    {
+        sprintf(tmp, "Server '%s' have not existed, or server route is online", config_ele->server_name);
+        my_error(ER_CONFIG_ERROR, MYF(0), tmp);
+        return true;
+    }
+
+    config_ele->sequence = ++thd->config_sequence;
+    config_ele->sub_command = thd->lex->sub_command;
+    str_init(&config_ele->config_command);
+    str_append_with_length(&config_ele->config_command, thd->query(), thd->query_length());
+    LIST_ADD_LAST(link, thd->config_cache->config_lst, config_ele);
+    thd->config_ele = NULL;
+    my_ok(thd);
+    return true;
+
+}
+
 int proxy_config_add_route(THD* thd)
 {
     config_element_t* config_ele = NULL;
@@ -280,7 +481,7 @@ int proxy_config_add_route(THD* thd)
             if (!strcasecmp(config_ele->server_name, ele->server_name) &&
                 config_ele->type == ele->type)
             {
-                sprintf(tmp, "Server '%s' route '%s' to have existed", 
+                sprintf(tmp, "Server '%s' route '%s' have existed", 
                     ele->server_name, ele->type == ROUTER_TYPE_RW ? "write" : "read");
                 my_error(ER_CONFIG_ERROR, MYF(0), tmp);
                 return true;
@@ -296,7 +497,7 @@ int proxy_config_add_route(THD* thd)
         if ((ulong)server->route->router_type == config_ele->type &&
             !strcasecmp(server->server->server_name, config_ele->server_name))
         {
-            sprintf(tmp, "Server '%s' route 'write' to have existed", config_ele->server_name);
+            sprintf(tmp, "Server '%s' route 'write' have existed", config_ele->server_name);
             my_error(ER_CONFIG_ERROR, MYF(0), tmp);
             return true;
         }
@@ -310,7 +511,7 @@ int proxy_config_add_route(THD* thd)
         if ((ulong)server->route->router_type == config_ele->type &&
             !strcasecmp(server->server->server_name, config_ele->server_name))
         {
-            sprintf(tmp, "Server '%s' route 'read' to have existed", config_ele->server_name);
+            sprintf(tmp, "Server '%s' route 'read' have existed", config_ele->server_name);
             my_error(ER_CONFIG_ERROR, MYF(0), tmp);
             return true;
         }
@@ -1225,6 +1426,82 @@ int proxy_add_rule(THD* thd, config_element_t* ele)
     return false;
 }
 
+int proxy_onoffline_route(THD* thd, config_element_t* ele)
+{
+    proxy_router_t* router;
+    proxy_servers_t* server;
+
+    server = LIST_GET_FIRST(global_proxy_config.server_lst);
+    while (server)
+    {
+        if (!strcasecmp(server->server_name, ele->server_name))
+            break;
+
+        server = LIST_GET_NEXT(link, server);
+    }
+
+    /* set to online */
+    if (thd->lex->table_count == true)
+    {
+        if (ele->type == ROUTER_TYPE_RO)
+            server->noread_routed = false;
+        else
+            server->nowrite_routed = false;
+    }
+    else 
+    {
+        if (ele->type == ROUTER_TYPE_RW)
+            server->nowrite_routed = true;
+        else
+            server->noread_routed = true;
+    }
+
+    global_proxy_config.config_version++;
+    return false;
+}
+
+int proxy_delete_route(THD* thd, config_element_t* ele)
+{
+    proxy_server_t* server_node;
+    proxy_server_t* server_next;
+    proxy_servers_t* server;
+
+    if (ele->type == ROUTER_TYPE_RO)
+    {
+        server_node = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+        while (server_node)
+        {
+            server_next = LIST_GET_NEXT(link, server_node);
+            server = server_node->server;
+            if (!strcmp(ele->server_name, server->server_name))
+            {
+                LIST_REMOVE(link, global_proxy_config.ro_server_lst, server_node);
+                my_free(server_node);
+            }
+            server_node = server_next;
+        }
+    }
+
+    if (ele->type == ROUTER_TYPE_RW)
+    {
+        server_node = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
+        while (server_node)
+        {
+            server_next = LIST_GET_NEXT(link, server_node);
+            server = server_node->server;
+            if (!strcmp(ele->server_name, server->server_name))
+            {
+                LIST_REMOVE(link, global_proxy_config.rw_server_lst, server_node);
+                my_free(server_node);
+            }
+            server_node = server_next;
+        }
+    }
+
+    global_proxy_config.config_version++;
+    return false;
+}
+
 int proxy_add_route(THD* thd, config_element_t* ele)
 {
     proxy_router_t* router;
@@ -1382,6 +1659,7 @@ int proxy_delete_server(THD* thd, config_element_t* ele)
                 return true;
             }
             LIST_REMOVE(link, global_proxy_config.server_lst, server);
+            my_free(server);
             break;
         }
         server = LIST_GET_NEXT(link, server);
@@ -1402,6 +1680,7 @@ int proxy_delete_server(THD* thd, config_element_t* ele)
         if (!strcmp(ele->server_name, server->server_name))
         {
             LIST_REMOVE(link, global_proxy_config.rw_server_lst, server_node);
+            my_free(server_node);
         }
         server_node = server_next;
     }
@@ -1414,6 +1693,7 @@ int proxy_delete_server(THD* thd, config_element_t* ele)
         if (!strcmp(ele->server_name, server->server_name))
         {
             LIST_REMOVE(link, global_proxy_config.ro_server_lst, server_node);
+            my_free(server_node);
         }
         server_node = server_next;
     }
@@ -1616,7 +1896,10 @@ int proxy_config_delete(THD* thd)
     {
         ele_next = LIST_GET_NEXT(link, ele);
         if (thd->lex->table_count == 0)
+        {
             LIST_REMOVE(link, thd->config_cache->config_lst, ele);
+            my_free(ele);
+        }
         else if (ele->sequence == thd->lex->table_count)
         {
             LIST_REMOVE(link, thd->config_cache->config_lst, ele);
@@ -1643,6 +1926,12 @@ int proxy_config_flush_low(THD* thd, config_element_t* ele)
         break;
     case CFG_ADD_ROUTE:
         proxy_add_route(thd, ele);
+        break;
+    case CFG_DELETE_ROUTE:
+        proxy_delete_route(thd, ele);
+        break;
+    case CFG_ONOFFLINE_ROUTE:
+        proxy_onoffline_route(thd, ele);
         break;
     case CFG_ADD_SERVER:
         return proxy_add_server(thd, ele);
@@ -2099,7 +2388,28 @@ void proxy_show_config_cache(THD *thd)
                 protocol->store("ADD_ROUTE", system_charset_info);
                 protocol->store(ele->server_name, system_charset_info);
                 protocol->store("NULL", system_charset_info);
-                protocol->store(str_get(&ele->config_command), str_get_len(&ele->config_command), system_charset_info);
+                protocol->store(str_get(&ele->config_command), 
+                    str_get_len(&ele->config_command), system_charset_info);
+                protocol->write();
+            }
+            else if (ele->sub_command == CFG_DELETE_ROUTE)
+            {
+                protocol->store((ulonglong) ele->sequence);
+                protocol->store("DELETE_ROUTE", system_charset_info);
+                protocol->store(ele->server_name, system_charset_info);
+                protocol->store("NULL", system_charset_info);
+                protocol->store(str_get(&ele->config_command), 
+                    str_get_len(&ele->config_command), system_charset_info);
+                protocol->write();
+            }
+            else if (ele->sub_command == CFG_ONOFFLINE_ROUTE)
+            {
+                protocol->store((ulonglong) ele->sequence);
+                protocol->store("ON or OFF ROUTE", system_charset_info);
+                protocol->store(ele->server_name, system_charset_info);
+                protocol->store("NULL", system_charset_info);
+                protocol->store(str_get(&ele->config_command), 
+                    str_get_len(&ele->config_command), system_charset_info);
                 protocol->write();
             }
             else if (ele->sub_command == CFG_DELETE_SERVER)
@@ -2108,7 +2418,8 @@ void proxy_show_config_cache(THD *thd)
                 protocol->store("DELETE_SERVER", system_charset_info);
                 protocol->store(ele->server_name, system_charset_info);
                 protocol->store("NULL", system_charset_info);
-                protocol->store(str_get(&ele->config_command), str_get_len(&ele->config_command), system_charset_info);
+                protocol->store(str_get(&ele->config_command), 
+                    str_get_len(&ele->config_command), system_charset_info);
                 protocol->write();
             }
             else if (ele->sub_command == CFG_RULE_ADD)
@@ -2237,6 +2548,7 @@ void mysqld_list_backend_servers(THD *thd,const char *user, bool verbose)
 void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
 {
     proxy_servers_t* server; 
+    proxy_servers_t* serverb; 
     proxy_server_t* server_node; 
     int entered = false;
     List<Item> field_list;
@@ -2266,6 +2578,10 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
                          Item_empty_string(thd, "Comments",
                                            USERNAME_CHAR_LENGTH),
                          mem_root);
+    field_list.push_back(new (mem_root)
+                         Item_empty_string(thd, "Routed",
+                                           USERNAME_CHAR_LENGTH),
+                         mem_root);
     if (protocol->send_result_set_metadata(&field_list,
                                            Protocol::SEND_NUM_ROWS |
                                            Protocol::SEND_EOF))
@@ -2291,6 +2607,22 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         else
             protocol->store(NULL, system_charset_info);
 
+        serverb = LIST_GET_FIRST(global_proxy_config.server_lst);
+        while (serverb)
+        {
+            if (!strcasecmp(serverb->server_name, server->server_name))
+            {
+                if (serverb->nowrite_routed && !entered)
+                    protocol->store("OFF", system_charset_info);
+                else if (serverb->noread_routed && entered)
+                    protocol->store("OFF", system_charset_info);
+                else
+                    protocol->store("ON", system_charset_info);
+            }
+
+            serverb = LIST_GET_NEXT(link, serverb);
+        }
+
         server_node = LIST_GET_NEXT(link, server_node);
         if (server_node == NULL && !entered)
         {
@@ -2314,6 +2646,7 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
             protocol->store((ulonglong) server->backend_port);
             protocol->store("No Routed", system_charset_info);
             protocol->store(NULL, system_charset_info);
+            protocol->store("OFF", system_charset_info);
             protocol->write();
         }
 
@@ -3232,6 +3565,12 @@ int proxy_set_threads_reconfig(THD* thd)
         break;
     case CFG_ADD_ROUTE:
         proxy_config_add_route(thd);
+        break;
+    case CFG_DELETE_ROUTE:
+        proxy_config_delete_route(thd);
+        break;
+    case CFG_ONOFFLINE_ROUTE:
+        proxy_config_onoffline_route(thd);
         break;
     case CFG_DELETE_SERVER:
         proxy_config_delete_server(thd);

@@ -1124,7 +1124,7 @@ int proxy_connection_can_route_read(backend_conn_t* conn)
     && conn->server->max_slave_lag < conn->slave_lag;
     int can_route = !slave_lag && conn->conn_inited() &&
     conn->server->server_status == SERVER_STATUS_ONLINE;
-    return can_route;
+    return can_route && !conn->server->noread_routed;
 }
 
 backend_conn_t* get_first_request_best_conn(THD* thd)
@@ -1194,7 +1194,9 @@ int proxy_connection_can_route_write(
     backend_conn_t* conn 
 )
 {
-    if (conn->conn_inited() && conn->server->server_status == SERVER_STATUS_ONLINE)
+    if (conn->conn_inited() && 
+        conn->server->server_status == SERVER_STATUS_ONLINE &&
+        !conn->server->nowrite_routed)
         return true;
 
     return false;

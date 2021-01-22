@@ -213,6 +213,8 @@ struct proxy_servers_struct
     int reconnect; /* need to reconnect */
     volatile ulong max_slave_lag;
     volatile int server_status;
+    volatile bool noread_routed; /* whether to routed read */
+    volatile bool nowrite_routed;/* whether to routed write */
     LIST_NODE_T(proxy_servers_t) link;
 };
 

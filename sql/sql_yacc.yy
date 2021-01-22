@@ -1805,7 +1805,7 @@ bool my_yyoverflow(short **a, YYSTYPE **b, ulong *yystacksize);
         opt_default_time_precision
         case_stmt_body opt_bin_mod
         opt_if_exists_table_element opt_if_not_exists_table_element
-        route_type 
+        route_type online_offline
 	opt_recursive
 
 %type <object_ddl_options>
@@ -2265,6 +2265,17 @@ server_attributes:
         | server_attributes ',' server_attribute
         ;
 
+online_offline:
+        ONLINE_SYM
+        {
+            $$ = true;
+        }
+        | OFFLINE_SYM
+        {
+            $$ = false;
+        }
+        ;
+
 route_type:
         READ_SYM
         {
@@ -2318,6 +2329,29 @@ config_proxy:
               sizeof(config_element_t), MY_ZEROFILL);
           strcpy(thd->config_ele->server_name, $5.str);
           thd->config_ele->type = $3;
+        }
+        | CONFIG_SYM online_offline ROUTE_SYM route_type SERVER_SYM ident
+        {
+          LEX *lex= thd->lex;
+          Lex->sql_command= SQLCOM_CONFIG;
+          Lex->sub_command= CFG_ONOFFLINE_ROUTE;
+          if (!thd->config_ele)
+              thd->config_ele = (config_element_t*)my_malloc(
+              sizeof(config_element_t), MY_ZEROFILL);
+          strcpy(thd->config_ele->server_name, $6.str);
+          thd->config_ele->type = $4;
+          lex->table_count = $2;
+        }
+        | CONFIG_SYM DELETE_SYM ROUTE_SYM route_type SERVER_SYM ident
+        {
+          LEX *lex= thd->lex;
+          Lex->sql_command= SQLCOM_CONFIG;
+          Lex->sub_command= CFG_DELETE_ROUTE;
+          if (!thd->config_ele)
+              thd->config_ele = (config_element_t*)my_malloc(
+              sizeof(config_element_t), MY_ZEROFILL);
+          strcpy(thd->config_ele->server_name, $6.str);
+          thd->config_ele->type = $4;
         }
         | CONFIG_SYM ADD ROUTE_SYM route_type SERVER_SYM ident
         {
