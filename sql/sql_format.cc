@@ -2522,16 +2522,37 @@ int get_set_var_sql(THD* thd, set_var_base *var, format_cache_node_t* format_nod
 {
     if (!strcasecmp(var->set_var_type, "set_var"))
     {
-        set_var* s_var = dynamic_cast <set_var*> (var);
-        str_append(format_node->format_sql, "set ");
-        str_append(format_node->format_sql, s_var->var->name.str);
+        set_var *s_var = dynamic_cast<set_var *>(var);
 
-        str_append(format_node->format_sql, "=");
-        if (!s_var->value)
-            str_append(format_node->format_sql, "DEFAULT");
+        if (strcasecmp(s_var->var->name.str, "tx_read_only"))
+        {
+
+            str_append(format_node->format_sql, "set ");
+            str_append(format_node->format_sql, s_var->var->name.str);
+
+            str_append(format_node->format_sql, "=");
+            if (!s_var->value)
+                str_append(format_node->format_sql, "DEFAULT");
+            else
+                format_item(thd, format_node, format_node->format_sql,
+                            s_var->value, &thd->lex->select_lex, false);
+        }
         else
-            format_item(thd, format_node, format_node->format_sql, 
-                s_var->value, &thd->lex->select_lex, false);
+        {
+
+            str_append(format_node->format_sql, "set transaction read ");
+
+            if (s_var->value && s_var->value->type() == Item::INT_ITEM)
+            {
+                int val = s_var->value->val_int();
+                val >= 1 ? str_append(format_node->format_sql, "only") : str_append(format_node->format_sql, "write");
+            }
+            else
+            {
+                // impossible
+                str_append(format_node->format_sql, "only");
+            }
+        }
     }
     else if (!strcasecmp(var->set_var_type, "set_user_var"))
     {

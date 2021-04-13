@@ -3183,6 +3183,66 @@ int proxy_auth_backend_server(
     DBUG_RETURN (1);
   }
 
+  if (mysql->net.read_pos[0] == 254)
+  {
+    /* The server asked to use a different authentication plugin */
+    if (pkt_length == 1)
+    {
+      /* old "use short scramble" packet */
+      DBUG_PRINT ("info", ("old use short scramble packet from server"));
+      auth_plugin_name= old_password_plugin_name;
+      mpvio.cached_server_reply.pkt= (uchar*)mysql->scramble;
+      mpvio.cached_server_reply.pkt_len= SCRAMBLE_LENGTH + 1;
+    }
+    else
+    {
+      /* new "use different plugin" packet */
+      uint len;
+      auth_plugin_name= (char*)mysql->net.read_pos + 1;
+      len= strlen(auth_plugin_name); /* safe as my_net_read always appends \0 */
+      mpvio.cached_server_reply.pkt_len= pkt_length - len - 2;
+      mpvio.cached_server_reply.pkt= mysql->net.read_pos + len + 2;
+      DBUG_PRINT ("info", ("change plugin packet from server for plugin %s",
+                           auth_plugin_name));
+    }
+
+    if (!(auth_plugin= (auth_plugin_t *) mysql_client_find_plugin(mysql,
+                         auth_plugin_name, MYSQL_CLIENT_AUTHENTICATION_PLUGIN)))
+      DBUG_RETURN (1);
+
+    mpvio.plugin= auth_plugin;
+    res= auth_plugin->authenticate_user((struct st_plugin_vio *)&mpvio, mysql);
+
+    DBUG_PRINT ("info", ("second authenticate_user returned %s", 
+                         res == CR_OK ? "CR_OK" : 
+                         res == CR_ERROR ? "CR_ERROR" :
+                         res == CR_OK_HANDSHAKE_COMPLETE ? 
+                         "CR_OK_HANDSHAKE_COMPLETE" : "error"));
+    if (res > CR_OK)
+    {
+      if (res > CR_ERROR)
+        set_mysql_error(mysql, res, unknown_sqlstate);
+      else
+        if (!mysql->net.last_errno)
+          set_mysql_error(mysql, CR_UNKNOWN_ERROR, unknown_sqlstate);
+      DBUG_RETURN (1);
+    }
+
+    if (res != CR_OK_HANDSHAKE_COMPLETE)
+    {
+      /* Read what server thinks about out new auth message report */
+      if (cli_safe_read(mysql) == packet_error)
+      {
+        if (mysql->net.last_errno == CR_SERVER_LOST)
+          set_mysql_extended_error(mysql, CR_SERVER_LOST, unknown_sqlstate,
+                                   ER(CR_SERVER_LOST_EXTENDED),
+                                   "reading final connect information",
+                                   errno);
+        DBUG_RETURN (1);
+      }
+    }
+  }
+
   /*
     net->read_pos[0] should always be 0 here if the server implements
     the protocol correctly
