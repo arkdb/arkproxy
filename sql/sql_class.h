@@ -48,6 +48,7 @@
 #include <mysql_com_server.h>
 #include "session_tracker.h"
 #include "sql_rules.h"
+#include <map>
 //#include "rdkafka.h"
 
 #define __CONSISTEND_READ__ 1
@@ -595,8 +596,56 @@ struct format_cache_struct
     LIST_BASE_NODE_T(format_cache_node_t)    field_lst;
 };
 
+#define ARKPROXY_DEBUG_EXECUTE(CODE, EXPR)           \
+  do                                                 \
+  {                                                  \
+    if (unlikely(proxy_log_message_enabled == CODE)) \
+    {                                                \
+      EXPR                                           \
+    }                                                \
+  } while (0)
+
 // int config_add_new_group(char* group_name);
 // int proxy_init_groups();
+class proxy_auth_passwd_manager
+{
+private:
+
+public:
+  class proxy_auth_user
+  {
+    public:
+    char user[USERNAME_CHAR_LENGTH + 1];
+    char host[HOSTNAME_LENGTH + 1];
+    /* the space is not enough when set too much dbs*/
+    char pass[65];
+    char priv[65];
+  };
+
+  mysql_rwlock_t proxy_user_rwlock;
+
+  typedef std::vector<proxy_auth_user *> proxy_user_list;
+  std::map<std::string, proxy_user_list> proxy_user_map;
+
+  proxy_auth_passwd_manager()
+  {
+    mysql_rwlock_init(key_rwlock_proxy_auth_users, &proxy_user_rwlock);
+  }
+
+  ~proxy_auth_passwd_manager()
+  {
+    mysql_rwlock_destroy(&proxy_user_rwlock);
+  }
+
+  bool load_all_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password);
+  bool load_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password);
+  bool user_auth_match(THD *thd, char *user, char *host, char *ip, char *password, proxy_auth_user *auth_user);
+  bool evict_user_auth(char* user, bool need_lock);
+};
+
+void proxy_user_manager_init();
+void proxy_user_manager_deinit();
+
 
 extern proxy_config_t global_proxy_config;
 

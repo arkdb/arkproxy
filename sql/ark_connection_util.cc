@@ -13,6 +13,7 @@
 #define VERSION_57 50700
 #define VERSION_MARIADB 100000
 
+proxy_auth_passwd_manager* proxy_user_manager;
 extern int get_set_var_sql(THD* thd, set_var_base *var, format_cache_node_t* format_node);
 extern THD *find_thread_by_id(longlong id, bool query_id);
 MYSQL* get_backend_connection(THD* thd, backend_conn_t* conn);
@@ -982,7 +983,7 @@ backend_conn_t* get_cluster_fixed_conn(THD* thd)
     return &thd->cluster_fixed_conn;
 }
 
-bool get_cluster_auth_passwd(THD* thd, char* user, char* host, char* ip, char* password)
+bool get_cluster_auth_passwd_low(THD* thd, char* user, char* host, char* ip, char* password)
 {
     bool check_rest = false;
     MYSQL_RES* source_res= 0;
@@ -1051,6 +1052,14 @@ bool get_cluster_auth_passwd(THD* thd, char* user, char* host, char* ip, char* p
 
     close_backend_connection(conn);
     return check_rest;
+}
+
+bool get_cluster_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password)
+{
+    if (proxy_user_cache_on)
+        return proxy_user_manager->load_auth_passwd(thd, user, host, ip, password);
+    else
+        return get_cluster_auth_passwd_low(thd, user, host, ip, password);
 }
 
 void proxy_change_user(THD* thd, NET *net, char* packet, uint packet_length)
@@ -1399,6 +1408,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     if(thd->db && thd->db[0] != '\0') {
         db = thd->db;
     }
+    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy connect to backend server:%s, host:%s, port%d",(const char *)sctx->user, (const char *)server->backend_host, server->backend_port); });
     if (!proxy_connect_backend_server(mysql, (const char *)server->backend_host,
                                       thd->main_security_ctx.ip, 
                                       (const char *)sctx->user, NULL, db,
@@ -1420,6 +1430,8 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     if (mysql_fetch_connection_variables(thd, conn))
     {
         err = true;
+        sql_print_warning("connection backend fetch variables failed, host: %s, port: %d, error:%s",
+                          conn->host, conn->port, mysql_error(mysql));
         goto end;
     }
     conn->inited = true;
@@ -1458,6 +1470,7 @@ int proxy_reconnect_servers(THD* thd)
     char* ip_or_host;
     int connection_count = 0;
     int normal_count = 0;
+    int write_conn_count = 0;
 
     ip_or_host = (char*)(sctx->ip ? sctx->ip : sctx->host_or_ip);
 
@@ -1519,6 +1532,10 @@ retry:
                 {
                     connection_count++;
                 }
+                else if (!entered)
+                {
+                    write_conn_count++;
+                }
             }
         }
 
@@ -1529,7 +1546,11 @@ retry:
             server_ptr = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
         }
     }
-    /*
+    bool conn_available = false;
+    if (!proxy_async_connect_server && normal_count != connection_count && write_conn_count > 0) {
+        conn_available = true;
+    }
+
     if (proxy_async_connect_server && thd->write_conn_count > 0)
     {
         for (int i = 0; !conn_available && i < thd->write_conn_count; i++)
@@ -1587,3 +1608,195 @@ int check_white_ip(char* ip, int length)
     return false;
 }
 
+bool proxy_auth_passwd_manager::load_all_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password)
+{
+    bool check_rest = false;
+    MYSQL_RES *source_res = 0;
+    MYSQL_ROW source_row;
+
+    proxy_servers_t *server_node;
+    backend_conn_t *conn;
+
+    ARKPROXY_DEBUG_EXECUTE(1, { sql_print_error("[trace log] proxy load_all_auth_passwd, user:%s,ip:%s", user, ip); });
+
+    conn = (backend_conn_t *)my_malloc(sizeof(backend_conn_t), MY_ZEROFILL);
+
+    //conn = (backend_conn_t*)my_malloc(sizeof(backend_conn_t), MY_ZEROFILL);
+    proxy_server_t *server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
+    while (server)
+    {
+        if (server->server->server_status == SERVER_STATUS_ONLINE)
+        {
+            server_node = server->server;
+            init_backend_conn_info(conn, server_node->backend_host, backend_user,
+                                   backend_passwd, server_node->backend_port);
+            break;
+        }
+
+        server = LIST_GET_NEXT(link, server);
+    }
+
+    get_backend_connection(NULL, conn);
+
+    if (conn == NULL || !conn->conn_inited())
+        return check_rest;
+    MYSQL *mysql = (MYSQL *)conn->get_mysql();
+    char sql[1024] = "";
+    char where[1024] = "";
+
+    int version = 0;
+
+    sprintf(sql, "show columns from mysql.user where Field='password';");
+    if (!mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        if ((source_res = mysql_store_result(mysql)) != NULL)
+        {
+            version = source_res->row_count;
+            //source_row = mysql_fetch_row(source_res);
+            //char version_tmp[30] = "";
+            //strcpy(version_tmp, source_row[0]);
+            //version = get_version(version_tmp);
+            mysql_free_result(source_res);
+        }
+    }
+
+    if(user) {
+        sprintf(where, " where user = '%s'", user);
+    }
+    if (version)
+    {
+        sprintf(sql, "select case when password='' then "
+                     "authentication_string else password  end as Password, "
+                     "Host, Super_priv,user from mysql.user %s",where);
+    }
+    else
+    {
+        sprintf(sql, "select authentication_string as Password, "
+                     "Host, Super_priv, user from mysql.user %s",where);
+    }
+
+    if (!mysql_real_query(mysql, sql, strlen(sql)))
+    {
+        if ((source_res = mysql_store_result(mysql)) != NULL)
+        {
+            mysql_rwlock_wrlock(&this->proxy_user_rwlock);
+            source_row = mysql_fetch_row(source_res);
+            if (user)
+            {
+                this->evict_user_auth(user, false);
+            }
+            while (source_row)
+            {
+                proxy_auth_user *auth_user =  new proxy_auth_user();
+                strcpy(auth_user->pass, source_row[0]);
+                strcpy(auth_user->host, source_row[1]);
+                strcpy(auth_user->priv, source_row[2]);
+                strcpy(auth_user->user, source_row[3]);
+                std::map<std::string, proxy_user_list>::iterator user_in_map = this->proxy_user_map.find(auth_user->user);
+                if (user_in_map != this->proxy_user_map.end())
+                {
+                    user_in_map->second.push_back(auth_user);
+                }
+                else
+                {
+                    proxy_user_list list;
+                    list.push_back(auth_user);
+                    this->proxy_user_map.insert(std::make_pair(auth_user->user,list));
+                }
+
+                if (user && this->user_auth_match(thd, user, host, ip, password, auth_user))
+                {
+                    check_rest = true;
+                }
+                source_row = mysql_fetch_row(source_res);
+            }
+
+            mysql_free_result(source_res);
+            mysql_rwlock_unlock(&this->proxy_user_rwlock);
+        }
+    }
+
+    close_backend_connection(conn);
+    return check_rest;
+}
+
+bool proxy_auth_passwd_manager::user_auth_match(THD *thd, char *user, char *host, char *ip, char *password, proxy_auth_user *auth_user)
+{
+    acl_host_and_ip host_and_ip;
+    update_hostname(&host_and_ip, auth_user->host);
+    if (compare_hostname(&host_and_ip, host, ip))
+    {
+        strcpy(password, auth_user->pass);
+        const char *sup_priv = auth_user->priv;
+        if (strcasecmp((char *)sup_priv, "Y") == 0)
+            thd->security_ctx->backend_access =
+                thd->security_ctx->backend_access | SUPER_ACL;
+        return true;
+    }
+    return false;
+}
+
+bool proxy_auth_passwd_manager::load_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password)
+{
+    bool check_rest = false;
+    proxy_auth_user *auth_user;
+    bool reloaded = false;
+    mysql_rwlock_rdlock(&this->proxy_user_rwlock);
+    std::map<std::string, proxy_user_list>::const_iterator user_in_map = this->proxy_user_map.find(user);
+    if (user_in_map != this->proxy_user_map.end())
+    {
+        proxy_user_list user_list = user_in_map->second;
+        for (size_t i = 0; i < user_list.size(); i++)
+        {
+            auth_user = user_list[i];
+            if (this->user_auth_match(thd, user, host, ip, password, auth_user))
+            {
+                ARKPROXY_DEBUG_EXECUTE(1, { sql_print_error("[trace log] proxy connect to cluster from cache user:%s", user); });
+                check_rest = true;
+                break;
+            }
+        }
+    }
+    mysql_rwlock_unlock(&this->proxy_user_rwlock);
+    if (!check_rest && !reloaded)
+    {
+        reloaded = true;
+        ARKPROXY_DEBUG_EXECUTE(1, { sql_print_error("[trace log] proxy cannot found match user, reloading user password, user:%s", user); });
+        return this->load_all_auth_passwd(thd, user, host, ip, password);
+    }
+    return check_rest;
+}
+
+bool proxy_auth_passwd_manager::evict_user_auth(char *user, bool need_lock)
+{
+    proxy_auth_user *auth_user;
+
+    if (need_lock)
+        mysql_rwlock_wrlock(&this->proxy_user_rwlock);
+    std::map<std::string, proxy_user_list>::const_iterator user_in_map = this->proxy_user_map.find(user);
+    if (user_in_map != this->proxy_user_map.end())
+    {
+        proxy_user_list user_list = user_in_map->second;
+        for (size_t i = 0; i < user_list.size(); i++)
+        {
+            auth_user = user_list[i];
+            delete auth_user;
+        }
+        this->proxy_user_map.erase(user);
+    }
+    if (need_lock)
+        mysql_rwlock_unlock(&this->proxy_user_rwlock);
+}
+
+void proxy_user_manager_init()
+{
+    proxy_user_manager = new proxy_auth_passwd_manager();
+    proxy_user_manager->load_all_auth_passwd(NULL, NULL, NULL, NULL, NULL);
+}
+
+void proxy_user_manager_deinit()
+{
+    if (proxy_user_manager)
+        delete proxy_user_manager;
+    proxy_user_manager = NULL;
+}

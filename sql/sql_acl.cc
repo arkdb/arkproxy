@@ -60,6 +60,7 @@
 
 bool mysql_user_table_is_in_short_password_format= false;
 extern char* backend_server_version;
+extern proxy_auth_passwd_manager *proxy_user_manager;
 static const
 TABLE_FIELD_TYPE mysql_db_table_fields[MYSQL_DB_FIELD_COUNT] = {
   {
@@ -12312,13 +12313,12 @@ int check_username_need_hash(char* ip, int length)
 int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
 {
     char sha1_pass[64];
-    Security_context *sctx= mpvio->thd->security_ctx;
+    Security_context *sctx = mpvio->thd->security_ctx;
     char key[256];
     int key_length;
     my_hash_value_type hash_value;
-    proxy_user_t* proxy_user;
-    char* server_user_ip;
-
+    proxy_user_t *proxy_user;
+    bool reload_auth = false;
     DBUG_ENTER("proxy_connect_cluster");
 
     sprintf(key, "%s%s", (char*)sctx->user, sctx->ip);
@@ -12333,9 +12333,8 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
         my_error(ER_TOO_MANY_USER_CONNECTIONS, MYF(0), sctx->user);
         DBUG_RETURN(1);
     }
-
-    server_user_ip = proxy_local_ip;
-    if (opt_proxy_reserve_client_address) server_user_ip = (char*)sctx->host_or_ip;
+    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy user connect to cluster:%s", sctx->user); });
+retry_get_auth:
     sctx->external_user= my_strdup(sctx->user, MYF(0));
     if (sctx->ip && !check_white_ip(sctx->ip, strlen(sctx->ip)))
     {
@@ -12385,8 +12384,15 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
         (const uint8 *)mpvio->thd->server_hash_stage1, (const uint8 *)mpvio->acl_user->salt);
 
     if (proxy_reconnect_servers(mpvio->thd))
-        DBUG_RETURN(true);
-
+    {
+      if (!reload_auth)
+      {
+        reload_auth = true;
+        proxy_user_manager->evict_user_auth(sctx->user, true);
+        goto retry_get_auth;
+      }
+      DBUG_RETURN(true);
+    }
     if (proxy_user)
     {
         mysql_mutex_lock(&global_proxy_config.config_lock);

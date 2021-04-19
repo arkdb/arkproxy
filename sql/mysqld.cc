@@ -495,6 +495,9 @@ char proxy_local_ip[256] = {0};
 char* proxy_white_ips;
 my_bool proxy_white_ips_on_update= 0;
 my_bool proxy_async_connect_server = 0;
+my_bool proxy_user_cache_on = false;
+ulong proxy_log_message_enabled = 0;
+
 double proxy_net_buffer_outlier_scale = 1.5;
 ulong proxy_net_per_buffer_max_size = 0;
 
@@ -1078,8 +1081,8 @@ static PSI_mutex_info all_server_mutexes[]=
 };
 
 PSI_rwlock_key key_rwlock_LOCK_grant, key_rwlock_LOCK_logger,
-  key_rwlock_LOCK_sys_init_connect, key_rwlock_LOCK_sys_init_slave,
-  key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock;
+    key_rwlock_LOCK_sys_init_connect, key_rwlock_LOCK_sys_init_slave,
+    key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock, key_rwlock_proxy_auth_users;
 
 static PSI_rwlock_info all_server_rwlocks[]=
 {
@@ -1092,6 +1095,7 @@ static PSI_rwlock_info all_server_rwlocks[]=
   { &key_rwlock_LOCK_sys_init_slave, "LOCK_sys_init_slave", PSI_FLAG_GLOBAL},
   { &key_rwlock_LOCK_system_variables_hash, "LOCK_system_variables_hash", PSI_FLAG_GLOBAL},
   { &key_rwlock_query_cache_query_lock, "Query_cache_query::lock", 0}
+  { &key_rwlock_proxy_auth_users, "proxy_auth_passwd_manager::lock", 0}
 };
 
 #ifdef HAVE_MMAP
@@ -5877,6 +5881,8 @@ int mysqld_main(int argc, char **argv)
 
   if (proxy_config_init(&orig_argc, &orig_argv, config_groups))
     unireg_abort(1);
+  proxy_user_manager_init();
+
 
   if (proxy_digest_trace)
       proxy_trace_cache_init();
@@ -5971,6 +5977,8 @@ int mysqld_main(int argc, char **argv)
 #endif /* _WIN32 || HAVE_SMEM */
 
   /* (void) pthread_attr_destroy(&connection_attrib); */
+
+  proxy_user_manager_deinit();
 
   DBUG_PRINT("quit",("Exiting main thread"));
 
