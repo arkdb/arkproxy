@@ -1661,19 +1661,20 @@ bool proxy_auth_passwd_manager::load_all_auth_passwd(THD *thd, char *user, char 
     }
 
     if(user) {
-        sprintf(where, " where user = '%s'", user);
+        sprintf(where, " and user = '%s'", user);
     }
     if (version)
     {
         sprintf(sql, "select case when password='' then "
                      "authentication_string else password  end as Password, "
-                     "Host, Super_priv,user from mysql.user %s",where);
+                     "Host, Super_priv,user from mysql.user where plugin='mysql_native_password' %s",where);
     }
     else
     {
         sprintf(sql, "select authentication_string as Password, "
-                     "Host, Super_priv, user from mysql.user %s",where);
+                     "Host, Super_priv, user from mysql.user where plugin='mysql_native_password' %s",where);
     }
+    
 
     if (!mysql_real_query(mysql, sql, strlen(sql)))
     {
@@ -1688,7 +1689,7 @@ bool proxy_auth_passwd_manager::load_all_auth_passwd(THD *thd, char *user, char 
             while (source_row)
             {
                 proxy_auth_user *auth_user =  new proxy_auth_user();
-                strcpy(auth_user->pass, source_row[0]);
+                strncpy(auth_user->pass, source_row[0], 64);
                 strcpy(auth_user->host, source_row[1]);
                 strcpy(auth_user->priv, source_row[2]);
                 strcpy(auth_user->user, source_row[3]);
