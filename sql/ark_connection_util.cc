@@ -1484,7 +1484,7 @@ retry:
 
     close_ark_conn(thd);
 
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     server_ptr = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server_ptr)
     {
@@ -1573,8 +1573,7 @@ retry:
             }
         }
     }
-    */
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     bool conn_available = false;
     if (!proxy_async_connect_server && normal_count != connection_count) {

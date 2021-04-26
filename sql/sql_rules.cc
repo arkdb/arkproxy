@@ -284,7 +284,7 @@ Query_Processor_Output * process_mysql_query(THD* thd) {
     Security_context *sctx= thd->security_ctx;
     if (__sync_add_and_fetch(&global_proxy_config.rules_version,0) > query_rule->rule_version) {
         // update local rules;
-        mysql_mutex_lock(&global_proxy_config.config_lock);
+        global_proxy_config.config_write_lock();
         query_rule->rule_version = __sync_add_and_fetch(&global_proxy_config.rules_version, 0);
         __reset_rules(query_rule->_thr_SQP_rules);
         QP_rule_t *qr1;
@@ -339,7 +339,7 @@ Query_Processor_Output * process_mysql_query(THD* thd) {
         //for (std::unordered_map<std::string, int>::iterator it = rules_fast_routing.begin(); it != rules_fast_routing.end(); ++it) {
         //    _thr_SQP_rules_fast_routing->insert(
         //}
-        mysql_mutex_unlock(&global_proxy_config.config_lock);
+        global_proxy_config.config_unlock();
     }
     QP_rule_t *qr = NULL;
     re2_t *re2p;

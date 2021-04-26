@@ -272,9 +272,26 @@ struct proxy_config_struct{
     HASH proxy_user;
 
     mysql_mutex_t config_lock;
+    mysql_rwlock_t config_rwlock;
+
     mysql_mutex_t white_ip_lock;
     mysql_mutex_t current_weight_lock;
     volatile bool setting;
+
+    void config_read_lock()
+    {
+      mysql_rwlock_rdlock(&this->config_rwlock);
+    }
+    
+    void config_unlock()
+    {
+      mysql_rwlock_unlock(&this->config_rwlock);
+    }
+
+    void config_write_lock()
+    {
+      mysql_rwlock_wrlock(&this->config_rwlock);
+    }
 };
 
 typedef struct config_element_struct config_element_t;

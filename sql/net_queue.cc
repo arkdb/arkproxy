@@ -1965,9 +1965,9 @@ int mysql_init_net_queue(THD* thd)
     thd->write_conn_count = 0;
     thd->read_conn_count = 0;
     thd->first_request = true;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     load_balance_for_server(thd);
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     thd->query_rule = (query_rules_t*)my_malloc(sizeof(query_rules_t), MYF(0));
     thd->query_rule->qpo = NULL;

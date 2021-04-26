@@ -836,6 +836,9 @@ int proxy_config_init( int *argc, char ***argv, char** groups)
 {
     int err=0;
     mysql_mutex_init(NULL, &global_proxy_config.config_lock, MY_MUTEX_INIT_FAST);
+    //TODO: deinit    
+    mysql_rwlock_init(key_rwlock_global_config, &global_proxy_config.config_rwlock);
+
     mysql_mutex_init(NULL, &global_proxy_config.white_ip_lock, MY_MUTEX_INIT_FAST);
     mysql_mutex_init(NULL, &global_proxy_config.current_weight_lock, MY_MUTEX_INIT_FAST);
     mysql_mutex_init(NULL, &global_trace_cache->trace_lock, MY_MUTEX_INIT_FAST);
@@ -849,9 +852,9 @@ int proxy_config_init( int *argc, char ***argv, char** groups)
     strcpy(proxy_version_ptr, MYSQL_SERVER_VERSION);
     global_proxy_config.config_version = 0;
     global_proxy_config.rules_version = 0;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_write_lock();
     err = proxy_load_config(true, argc, argv, groups);
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
     if (err)
         proxy_config_deinit();
     return err;
@@ -867,12 +870,13 @@ int proxy_config_reload()
         return true;
     }
 
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_write_lock();
+
     global_proxy_config.setting = true;
     proxy_config_deinit();
     error = proxy_load_config(false, &orig_argc, &orig_argv, NULL);
     global_proxy_config.setting = false;
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     return error;
 }
@@ -1144,7 +1148,7 @@ MYSQL* proxy_get_config_server_connection(int need_lock)
     else 
     {
         if (need_lock)
-            mysql_mutex_lock(&global_proxy_config.config_lock);
+            global_proxy_config.config_read_lock();
 
         /* find one avialable node to get connection 
          * if the there is no avialable node, then can not get connection */
@@ -1174,7 +1178,7 @@ MYSQL* proxy_get_config_server_connection(int need_lock)
             conn->inited = false;
 
         if (need_lock)
-            mysql_mutex_unlock(&global_proxy_config.config_lock);
+            global_proxy_config.config_unlock();
     }
 
     return get_backend_connection(NULL, conn);
@@ -1192,7 +1196,7 @@ MYSQL* proxy_get_trace_server_connection_with_con(backend_conn_t* conn)
         }
         else
         {
-            mysql_mutex_lock(&global_proxy_config.config_lock);
+            global_proxy_config.config_read_lock();
             proxy_server_t* server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
             if (server)
             {
@@ -1208,7 +1212,7 @@ MYSQL* proxy_get_trace_server_connection_with_con(backend_conn_t* conn)
             {
                 conn->inited = false;
             }
-            mysql_mutex_unlock(&global_proxy_config.config_lock);
+            global_proxy_config.config_unlock();
         }
     }
     return get_backend_connection(NULL, conn);
@@ -1226,7 +1230,7 @@ MYSQL* proxy_get_config_server_connection_with_con(backend_conn_t* conn)
         }
         else
         {
-            mysql_mutex_lock(&global_proxy_config.config_lock);
+            global_proxy_config.config_read_lock();
             proxy_server_t* server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
             if (server)
             {
@@ -1242,7 +1246,7 @@ MYSQL* proxy_get_config_server_connection_with_con(backend_conn_t* conn)
             {
                 conn->inited = false;
             }
-            mysql_mutex_unlock(&global_proxy_config.config_lock);
+            global_proxy_config.config_unlock();
         }
     }
     return get_backend_connection(NULL, conn);
@@ -1620,9 +1624,9 @@ proxy_decr_user_connections(THD* thd)
 
     if (proxy_user && thd->conn_count_added)
     {
-        mysql_mutex_lock(&global_proxy_config.config_lock);
+        global_proxy_config.config_write_lock();
         proxy_user->conn_count--;
-        mysql_mutex_unlock(&global_proxy_config.config_lock);
+        global_proxy_config.config_unlock();
     }
 
     return false;

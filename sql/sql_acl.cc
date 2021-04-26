@@ -12400,10 +12400,10 @@ retry_get_auth:
     }
     if (proxy_user)
     {
-        mysql_mutex_lock(&global_proxy_config.config_lock);
+        global_proxy_config.config_write_lock();
         proxy_user->conn_count++;
         mpvio->thd->conn_count_added = true;
-        mysql_mutex_unlock(&global_proxy_config.config_lock);
+        global_proxy_config.config_unlock();
     }
 
     DBUG_RETURN(false);

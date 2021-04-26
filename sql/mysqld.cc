@@ -1082,7 +1082,7 @@ static PSI_mutex_info all_server_mutexes[]=
 
 PSI_rwlock_key key_rwlock_LOCK_grant, key_rwlock_LOCK_logger,
     key_rwlock_LOCK_sys_init_connect, key_rwlock_LOCK_sys_init_slave,
-    key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock, key_rwlock_proxy_auth_users;
+    key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock, key_rwlock_proxy_auth_users,key_rwlock_global_config;
 
 static PSI_rwlock_info all_server_rwlocks[]=
 {
@@ -1095,7 +1095,8 @@ static PSI_rwlock_info all_server_rwlocks[]=
   { &key_rwlock_LOCK_sys_init_slave, "LOCK_sys_init_slave", PSI_FLAG_GLOBAL},
   { &key_rwlock_LOCK_system_variables_hash, "LOCK_system_variables_hash", PSI_FLAG_GLOBAL},
   { &key_rwlock_query_cache_query_lock, "Query_cache_query::lock", 0}
-  { &key_rwlock_proxy_auth_users, "proxy_auth_passwd_manager::lock", 0}
+  { &key_rwlock_proxy_auth_users, "proxy_auth_passwd_manager::proxy_user_rwlock", 0}
+  { &key_rwlock_global_config, "proxy_config_t::config_rwlock", 0}
 };
 
 #ifdef HAVE_MMAP
