@@ -496,6 +496,7 @@ char* proxy_white_ips;
 my_bool proxy_white_ips_on_update= 0;
 my_bool proxy_async_connect_server = 0;
 my_bool proxy_user_cache_on = false;
+my_bool proxy_lazy_connect_on = false;
 ulong proxy_log_message_enabled = 0;
 
 double proxy_net_buffer_outlier_scale = 1.5;

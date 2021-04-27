@@ -1130,29 +1130,44 @@ void proxy_change_user(THD* thd, NET *net, char* packet, uint packet_length)
 
 int proxy_connection_can_route_read(backend_conn_t* conn)
 {
-    int slave_lag = conn->slave_lag != 0 && conn->slave_lag != ULONG_MAX
-    && conn->server->max_slave_lag < conn->slave_lag;
-    int can_route = !slave_lag && conn->conn_inited() &&
-    conn->server->server_status == SERVER_STATUS_ONLINE;
-    return can_route;
+    int slave_lag = conn->slave_lag != 0 && conn->slave_lag != ULONG_MAX && conn->server->max_slave_lag < conn->slave_lag;
+    int can_route = !slave_lag &&
+                    conn->server->server_status == SERVER_STATUS_ONLINE;
+
+    if (proxy_lazy_connect_on && conn->lazy_conn_needed)
+        return can_route;
+
+    return can_route && conn->conn_inited();
 }
 
 backend_conn_t* get_first_request_best_conn(THD* thd)
 {
     int total_weight = 0;
-    backend_conn_t* best = NULL;
-    for (int  i=0; i<thd->read_conn_count; ++i)
+    backend_conn_t *best = NULL;
+re_route:
+    total_weight = 0;
+    best = NULL;
+    for (int i = 0; i < thd->read_conn_count; ++i)
     {
-        backend_conn_t* conn = thd->read_conn[i];
+        backend_conn_t *conn = thd->read_conn[i];
+
+        if (!thd->first_request || conn->server != thd->first_request_best_server)
+            continue;
         int can_route = proxy_connection_can_route_read(conn);
-        conn->server->current_weight += can_route ? conn->server->weight : 0;  //update server's current_weight
+        conn->server->current_weight += can_route ? conn->server->weight : 0; //update server's current_weight
         total_weight += can_route ? conn->server->weight : 0;
-        if (can_route && conn->autocommit && thd->first_request
-            && conn->server == thd->first_request_best_server)
+        if (can_route && conn->autocommit && thd->first_request && conn->server == thd->first_request_best_server)
         {
             best = conn;
         }
     }
+
+    if(best && !best->conn_inited()) {
+        DBUG_ASSERT(best->lazy_conn_needed == false);
+        DBUG_ASSERT(proxy_lazy_connect_on);
+        goto re_route;
+    }
+
     if (best)
     {
         mysql_mutex_lock(&global_proxy_config.current_weight_lock);
@@ -1168,11 +1183,15 @@ backend_conn_t* load_balance_for_read(THD* thd)
     backend_conn_t* best = NULL;
     if (thd->first_request)
     {
-        thd->first_request = false;
         best = get_first_request_best_conn(thd);
+        thd->first_request = false;
         if (best)
             return best;
     }
+    
+re_route:
+    total_weight = 0;
+    best = NULL;
     for (int i=0; i< thd->read_conn_count; ++i)
     {
         backend_conn_t* conn = thd->read_conn[i];
@@ -1186,6 +1205,13 @@ backend_conn_t* load_balance_for_read(THD* thd)
         {
             best = conn;
         }
+    }
+
+    if (best && !best->conn_inited())
+    {
+        DBUG_ASSERT(best->lazy_conn_needed == false);
+        DBUG_ASSERT(proxy_lazy_connect_on);
+        goto re_route;
     }
 
     if (best)
@@ -1294,6 +1320,7 @@ add_write_connection(
     conn->server = server;
     conn->env_version = 0;
     conn->current_weight = 0;
+    conn->thd = thd;
 #if __CONSISTEND_READ__
     conn->consistend_cache = NULL;
 #endif
@@ -1329,8 +1356,7 @@ add_read_connection(
     conn->server = server;
     conn->env_version = 0;
     conn->current_weight = 0;
-    conn->conn_async_inited = false;
-    conn->conn_async_complete = false;
+    conn->thd = thd;
 
 #if __CONSISTEND_READ__
     conn->consistend_cache = NULL;
@@ -1408,7 +1434,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     if(thd->db && thd->db[0] != '\0') {
         db = thd->db;
     }
-    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy connect to backend server:%s, host:%s, port%d",(const char *)sctx->user, (const char *)server->backend_host, server->backend_port); });
+    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy connect to backend server:%s, host:%s, port:%d",(const char *)sctx->user, (const char *)server->backend_host, server->backend_port); });
     if (!proxy_connect_backend_server(mysql, (const char *)server->backend_host,
                                       thd->main_security_ctx.ip, 
                                       (const char *)sctx->user, NULL, db,
@@ -1436,6 +1462,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     }
     conn->inited = true;
 end:
+    conn->lazy_conn_needed = false;
     conn->conn_async_complete = true;
     return err;
 }
@@ -1495,6 +1522,17 @@ retry:
         else
             conn = add_read_connection(thd, server, sctx->external_user, sctx->user, 
                 (char*)ip_or_host, server->backend_port);
+
+        if (proxy_lazy_connect_on && write_conn_count > 0) {
+            conn->lazy_conn_needed = true;
+            server_ptr = LIST_GET_NEXT(link, server_ptr);
+            if (server_ptr == NULL && !entered)
+            {
+                entered = true;
+                server_ptr = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+            }
+            continue;
+        }
 
         if (!conn->conn_inited() && server->server_status == SERVER_STATUS_ONLINE)
         {
@@ -1562,17 +1600,17 @@ retry:
             }
         }
     }
-    if (proxy_async_connect_server && thd->read_conn_count > 0)
-    {
-        for (int i = 0; !conn_available && i < thd->read_conn_count; i++)
-        {
-            conn = thd->read_conn[i];
-            if(conn->conn_inited()) {
-                conn_available = true;
-                break;
-            }
-        }
-    }
+    // if (proxy_async_connect_server && thd->read_conn_count > 0)
+    // {
+    //     for (int i = 0; !conn_available && i < thd->read_conn_count; i++)
+    //     {
+    //         conn = thd->read_conn[i];
+    //         if(conn->conn_inited()) {
+    //             conn_available = true;
+    //             break;
+    //         }
+    //     }
+    // }
     global_proxy_config.config_unlock();
 
     bool conn_available = false;
@@ -1620,7 +1658,6 @@ bool proxy_auth_passwd_manager::load_all_auth_passwd(THD *thd, char *user, char 
 
     conn = (backend_conn_t *)my_malloc(sizeof(backend_conn_t), MY_ZEROFILL);
 
-    //conn = (backend_conn_t*)my_malloc(sizeof(backend_conn_t), MY_ZEROFILL);
     proxy_server_t *server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server)
     {
@@ -1788,6 +1825,22 @@ bool proxy_auth_passwd_manager::evict_user_auth(char *user, bool need_lock)
         mysql_rwlock_unlock(&this->proxy_user_rwlock);
 }
 
+void proxy_auth_passwd_manager::evict_all(){
+    proxy_auth_user *auth_user;
+
+    std::map<std::string, proxy_user_list>::iterator user_in_map;
+    for (user_in_map = this->proxy_user_map.begin(); user_in_map != this->proxy_user_map.end();)
+    {
+        proxy_user_list user_list = user_in_map->second;
+        for (size_t i = 0; i < user_list.size(); i++)
+        {
+            auth_user = user_list[i];
+            delete auth_user;
+        }
+        this->proxy_user_map.erase(user_in_map++);
+    }
+}
+
 void proxy_user_manager_init()
 {
     proxy_user_manager = new proxy_auth_passwd_manager();
@@ -1796,7 +1849,42 @@ void proxy_user_manager_init()
 
 void proxy_user_manager_deinit()
 {
-    if (proxy_user_manager)
+    if (proxy_user_manager) {
+        proxy_user_manager->evict_all();
         delete proxy_user_manager;
+    }
     proxy_user_manager = NULL;
+}
+
+bool backend_conn_struct::conn_inited()
+{
+    if (inited)
+        return true;
+    int times = 0;
+    while (conn_async_inited && !conn_async_complete)
+    {
+        // 1ms
+        my_sleep(1000);
+        times++;
+        if (times >= 5000)
+        {
+            break;
+        }
+    }
+    if (lazy_conn_needed)
+    {
+        global_proxy_config.config_read_lock();
+        if (thd->reconfig)
+        {
+            global_proxy_config.config_unlock();
+            lazy_conn_needed = false;
+            return inited;
+        }
+        ARKPROXY_DEBUG_EXECUTE(2, { sql_print_warning("[trace log] proxy lazy connect to backend host:%s, port:%d",
+                                                      this->host, this->port); });
+        proxy_reconnect_server(this->thd, this);
+        global_proxy_config.config_unlock();
+        lazy_conn_needed = false;
+    }
+    return inited;
 }

@@ -1695,12 +1695,16 @@ proxy_set_threads_reload(THD* thd)
         my_ok(thd);
         return false;
     }
+    global_proxy_config.config_write_lock();
 
-    if (proxy_config_reload())
-    {
-        return true;
-    }
-  
+    /**
+     * 1. 修改reconfig逻辑，先config write lock然后设置thd->reconfig，再去reload。
+     * 
+     * 2. 正常sql判断reconfig时必然就会去执行proxy_reconnect_servers, 进而请求config_read_lock被阻塞。
+     * 
+     * 3. 无需reconfig时，如果mysql连接已经建立，不会用到server的信息。mysql如果未建立，则可能属于延迟连接时，会先获取config_read_lock然后再次判断reconfig，保证原子性，否则延迟连接判断无需reconfig则会去使用conn->server连接后端，这里server可能已经被释放了。
+    */
+   
     mysql_mutex_lock(&LOCK_thread_count); // For unlink from list
     I_List_iterator<THD> it(threads);
     THD *tmp;
@@ -1715,6 +1719,13 @@ proxy_set_threads_reload(THD* thd)
     }
 
     mysql_mutex_unlock(&LOCK_thread_count);
+
+    if (proxy_config_reload())
+    {
+        return true;
+    }
+
+    global_proxy_config.config_unlock();
 
     if (proxy_sync_config_cluster(thd, (char*)"config reload"))
         return true;

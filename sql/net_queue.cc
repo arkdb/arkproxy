@@ -1712,7 +1712,7 @@ int proxy_heartbeat_queue_low(THD* thd, THD* exe_thd, int count, backend_conn_t*
         /* if connection is valid and the time since last heartbeat is 
          * more then half of wait_timeout, do heartbeat again */
         /* if the connection is invalid, then skip it */
-        if (!conn || !conn->conn_inited())
+        if (!conn || conn->lazy_conn_needed || !conn->conn_inited())
             continue;
         if (conn->wait_timeout * 500000 < currtime - conn->last_heartbeat ||
             proxy_server_heartbeat_period * 1000000 < currtime - conn->last_heartbeat)

@@ -343,8 +343,8 @@ struct proxy_user_struct{
     /* the space is not enough when set too much dbs*/
     char  dbname[HOSTNAME_LENGTH + 1];
     char  hash_key[HOSTNAME_LENGTH * 2 + 1];
-    ulong max_connections;
-    ulong conn_count;
+    int64 max_connections;
+    volatile int64 conn_count;
 };
 
 typedef struct backend_conn_struct backend_conn_t;
@@ -369,6 +369,7 @@ struct backend_conn_struct {
     ulong autocommit;
     ulong start_timer;
     volatile bool inited;
+    volatile bool lazy_conn_needed;
     volatile bool conn_async_inited;
     volatile bool conn_async_complete;
     proxy_servers_t* server;
@@ -391,29 +392,15 @@ struct backend_conn_struct {
     }
 
     void set_mysql(void *mysql) { m_mysql = mysql; }
-    bool conn_inited() {
-      if (inited)
-        return true;
-      int times = 0;
-      while (conn_async_inited && !conn_async_complete) {
-        /*
-        my_sleep(1000); // 1ms
-        times++;
-        if(times >= 5000) {
-          break;
-        }
-        */
-        /* not to wait */
-        break;
-      }
-      return inited;
-    }
+    bool conn_inited();
+
     backend_conn_struct() {
       async_thd = NULL;
       m_mysql = NULL;
       conn_async_inited = false;
       conn_async_complete = false;
       inited = false;
+      lazy_conn_needed = false;
     }
 };
 
@@ -658,6 +645,7 @@ public:
   bool load_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password);
   bool user_auth_match(THD *thd, char *user, char *host, char *ip, char *password, proxy_auth_user *auth_user);
   bool evict_user_auth(char* user, bool need_lock);
+  void evict_all();
 };
 
 void proxy_user_manager_init();
@@ -5021,7 +5009,7 @@ public:
   }
     
 public:
-    int conn_count_added;
+    volatile int conn_count_added;
     uint8 server_hash_stage1[64];
     backend_conn_t cluster_fixed_conn;
     backend_conn_t* last_conn;

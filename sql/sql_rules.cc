@@ -284,7 +284,7 @@ Query_Processor_Output * process_mysql_query(THD* thd) {
     Security_context *sctx= thd->security_ctx;
     if (__sync_add_and_fetch(&global_proxy_config.rules_version,0) > query_rule->rule_version) {
         // update local rules;
-        global_proxy_config.config_write_lock();
+        global_proxy_config.config_read_lock();
         query_rule->rule_version = __sync_add_and_fetch(&global_proxy_config.rules_version, 0);
         __reset_rules(query_rule->_thr_SQP_rules);
         QP_rule_t *qr1;

@@ -870,13 +870,10 @@ int proxy_config_reload()
         return true;
     }
 
-    global_proxy_config.config_write_lock();
-
     global_proxy_config.setting = true;
     proxy_config_deinit();
     error = proxy_load_config(false, &orig_argc, &orig_argv, NULL);
     global_proxy_config.setting = false;
-    global_proxy_config.config_unlock();
 
     return error;
 }
@@ -1624,9 +1621,9 @@ proxy_decr_user_connections(THD* thd)
 
     if (proxy_user && thd->conn_count_added)
     {
-        global_proxy_config.config_write_lock();
-        proxy_user->conn_count--;
-        global_proxy_config.config_unlock();
+        // global_proxy_config.config_write_lock();
+        my_atomic_add64(&proxy_user->conn_count, -1);
+        // global_proxy_config.config_unlock();
     }
 
     return false;

@@ -12400,10 +12400,10 @@ retry_get_auth:
     }
     if (proxy_user)
     {
-        global_proxy_config.config_write_lock();
-        proxy_user->conn_count++;
-        mpvio->thd->conn_count_added = true;
-        global_proxy_config.config_unlock();
+      // global_proxy_config.config_write_lock();
+      my_atomic_add64(&proxy_user->conn_count, 1UL);
+      my_atomic_store32(&mpvio->thd->conn_count_added, 1);
+      // global_proxy_config.config_unlock();
     }
 
     DBUG_RETURN(false);

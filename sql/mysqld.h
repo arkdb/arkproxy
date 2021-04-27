@@ -328,6 +328,7 @@ extern char* proxy_white_ips;
 extern my_bool proxy_white_ips_on_update;
 extern my_bool proxy_async_connect_server;
 extern my_bool proxy_user_cache_on;
+extern my_bool proxy_lazy_connect_on;
 extern ulong proxy_log_message_enabled;
 extern double proxy_net_buffer_outlier_scale;
 extern ulong proxy_net_per_buffer_max_size;

@@ -4987,6 +4987,11 @@ static Sys_var_mybool Sys_proxy_user_cache_on(
     GLOBAL_VAR(proxy_user_cache_on), CMD_LINE(OPT_ARG), DEFAULT(TRUE),
     NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL, NULL, 0, 0);
 
+static Sys_var_mybool Sys_proxy_lazy_connect_on(
+    "proxy_lazy_connect_on", "lazy connect to read server",
+    GLOBAL_VAR(proxy_lazy_connect_on), CMD_LINE(OPT_ARG), DEFAULT(TRUE),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL, NULL, 0, 0);
+
 static Sys_var_ulong Sys_proxy_log_message_enabled(
     "proxy_log_message_enabled", "enable proxy trace log for debug",
     GLOBAL_VAR(proxy_log_message_enabled), CMD_LINE(REQUIRED_ARG),
