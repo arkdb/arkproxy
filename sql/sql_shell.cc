@@ -2514,6 +2514,8 @@ void mysqld_list_backend_connections(THD *thd,const char *user, bool verbose)
                 protocol->store(conn->md5_hash, system_charset_info);
                 if (conn->conn_inited() && conn->server)
                     protocol->store(conn->server->backend_host, system_charset_info);
+                else if (conn->lazy_conn_needed)
+                    protocol->store("waiting for connected", system_charset_info);
                 else
                     protocol->store("NULL", system_charset_info);
 
@@ -2548,6 +2550,8 @@ void mysqld_list_backend_connections(THD *thd,const char *user, bool verbose)
                 protocol->store(conn->md5_hash, system_charset_info);
                 if (conn->conn_inited() && conn->server)
                     protocol->store(conn->server->backend_host, system_charset_info);
+                else if (conn->lazy_conn_needed)
+                    protocol->store("waiting for connected", system_charset_info);
                 else
                     protocol->store("NULL", system_charset_info);
                 protocol->store_long(conn->port);

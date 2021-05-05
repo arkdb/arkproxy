@@ -392,7 +392,7 @@ struct backend_conn_struct {
     }
 
     void set_mysql(void *mysql) { m_mysql = mysql; }
-    bool conn_inited();
+    bool conn_inited(bool lazy_conn = false);
 
     backend_conn_struct() {
       async_thd = NULL;

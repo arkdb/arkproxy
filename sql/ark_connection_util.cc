@@ -1162,7 +1162,7 @@ re_route:
         }
     }
 
-    if(best && !best->conn_inited()) {
+    if(best && !best->conn_inited(true)) {
         DBUG_ASSERT(best->lazy_conn_needed == false);
         DBUG_ASSERT(proxy_lazy_connect_on);
         goto re_route;
@@ -1207,7 +1207,7 @@ re_route:
         }
     }
 
-    if (best && !best->conn_inited())
+    if (best && !best->conn_inited(true))
     {
         DBUG_ASSERT(best->lazy_conn_needed == false);
         DBUG_ASSERT(proxy_lazy_connect_on);
@@ -1230,7 +1230,7 @@ int proxy_connection_can_route_write(
     backend_conn_t* conn 
 )
 {
-    if (conn->conn_inited() && conn->server->server_status == SERVER_STATUS_ONLINE)
+    if (conn->conn_inited(true) && conn->server->server_status == SERVER_STATUS_ONLINE)
         return true;
 
     return false;
@@ -1411,6 +1411,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     conn->inited = false;
     int err = false;
     if(conn->get_mysql(false)) {
+      DBUG_ASSERT(0);
       sql_print_information("connection is not closed, reset connection");
       MYSQL* old_mysql = (MYSQL *)conn->get_mysql(false);
       conn->set_mysql(NULL);
@@ -1533,7 +1534,9 @@ retry:
             }
             continue;
         }
-
+        
+        conn->lazy_conn_needed = false;
+        
         if (!conn->conn_inited() && server->server_status == SERVER_STATUS_ONLINE)
         {
             if (proxy_async_connect_server) {
@@ -1856,7 +1859,7 @@ void proxy_user_manager_deinit()
     proxy_user_manager = NULL;
 }
 
-bool backend_conn_struct::conn_inited()
+bool backend_conn_struct::conn_inited(bool lazy_conn)
 {
     if (inited)
         return true;
@@ -1871,10 +1874,10 @@ bool backend_conn_struct::conn_inited()
             break;
         }
     }
-    if (lazy_conn_needed)
+    if (lazy_conn_needed && lazy_conn)
     {
         global_proxy_config.config_read_lock();
-        if (thd->reconfig)
+        if (thd->reconfig && this->server->server_status != SERVER_STATUS_ONLINE)
         {
             global_proxy_config.config_unlock();
             lazy_conn_needed = false;

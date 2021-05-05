@@ -1775,7 +1775,7 @@ int proxy_timer_checker(THD* thd)
         for (i = 0; i < thd->read_conn_count; i++)
         {
             conn = thd->read_conn[i];
-            if (!conn || !conn->conn_inited())
+            if (!conn || conn->lazy_conn_needed || !conn->conn_inited())
                 continue;
             mysql_fetch_server_status(conn);
         }
@@ -1791,7 +1791,7 @@ int proxy_timer_checker(THD* thd)
         for (i = 0; i < thd->read_conn_count; i++)
         {
             conn = thd->read_conn[i];
-            if (!conn || !conn->conn_inited() || !conn->consistend_cache)
+            if (!conn || conn->lazy_conn_needed || !conn->conn_inited() || !conn->consistend_cache)
                 continue;
             mysql_fetch_slave_consistend_read_table(conn);
         }
