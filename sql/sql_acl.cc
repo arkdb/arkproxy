@@ -60,6 +60,7 @@
 
 bool mysql_user_table_is_in_short_password_format= false;
 extern char* backend_server_version;
+extern proxy_auth_passwd_manager *proxy_user_manager;
 static const
 TABLE_FIELD_TYPE mysql_db_table_fields[MYSQL_DB_FIELD_COUNT] = {
   {
@@ -12312,13 +12313,12 @@ int check_username_need_hash(char* ip, int length)
 int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
 {
     char sha1_pass[64];
-    Security_context *sctx= mpvio->thd->security_ctx;
+    Security_context *sctx = mpvio->thd->security_ctx;
     char key[256];
     int key_length;
     my_hash_value_type hash_value;
-    proxy_user_t* proxy_user;
-    char* server_user_ip;
-
+    proxy_user_t *proxy_user;
+    bool reload_auth = false;
     DBUG_ENTER("proxy_connect_cluster");
 
     sprintf(key, "%s%s", (char*)sctx->user, sctx->ip);
@@ -12333,9 +12333,8 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
         my_error(ER_TOO_MANY_USER_CONNECTIONS, MYF(0), sctx->user);
         DBUG_RETURN(1);
     }
-
-    server_user_ip = proxy_local_ip;
-    if (opt_proxy_reserve_client_address) server_user_ip = (char*)sctx->host_or_ip;
+    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy user connect to cluster:%s", sctx->user); });
+retry_get_auth:
     sctx->external_user= my_strdup(sctx->user, MYF(0));
     if (sctx->ip && !check_white_ip(sctx->ip, strlen(sctx->ip)))
     {
@@ -12348,13 +12347,13 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
         sctx->set_user(new_user_hash);
         if (opt_proxy_reserve_client_address || 
             !get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-              (char*)NULL, server_user_ip, sha1_pass))
+              (char*)NULL, proxy_local_ip, sha1_pass))
         {
             /* if the hash user name is not existed, then find the 
              * not hash user name, in case the % ips is set */
             sctx->set_user(sctx->external_user);
             if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-                  (char*)NULL, server_user_ip, sha1_pass))
+                  (char*)NULL, proxy_local_ip, sha1_pass))
             {
                 login_failed_error(mpvio->thd);
                 DBUG_RETURN(1);
@@ -12366,14 +12365,14 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
              || strcasecmp(sctx->ip, "127.0.0.1") == 0))
     {
         if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-              (char*)NULL, server_user_ip, sha1_pass))
+              (char*)NULL, proxy_local_ip, sha1_pass))
         {
             login_failed_error(mpvio->thd);
             DBUG_RETURN(1);
         }
     }
     else if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-          (char*)sctx->host_or_ip, (char*)server_user_ip, sha1_pass))
+          (char*)sctx->host_or_ip, (char*)proxy_local_ip, sha1_pass))
     {
         login_failed_error(mpvio->thd);
         DBUG_RETURN(1);
@@ -12381,18 +12380,30 @@ int proxy_connect_cluster(MPVIO_EXT *mpvio, char* passwd)
 
     mpvio->acl_user = create_shell_user_proxy(mpvio->thd, mpvio->thd->mem_root, sha1_pass);
 
+    if (mpvio->cached_client_reply.plugin && strcasecmp(mpvio->cached_client_reply.plugin, "caching_sha2_password") == 0)
+    {
+      DBUG_RETURN(false);
+    }
+
     caculate_first_stage_hash1((const uchar*)passwd, (const char*)mpvio->thd->scramble, 
         (const uint8 *)mpvio->thd->server_hash_stage1, (const uint8 *)mpvio->acl_user->salt);
 
     if (proxy_reconnect_servers(mpvio->thd))
-        DBUG_RETURN(true);
-
+    {
+      if (!reload_auth)
+      {
+        reload_auth = true;
+        proxy_user_manager->evict_user_auth(sctx->user, true);
+        goto retry_get_auth;
+      }
+      DBUG_RETURN(true);
+    }
     if (proxy_user)
     {
-        mysql_mutex_lock(&global_proxy_config.config_lock);
-        proxy_user->conn_count++;
-        mpvio->thd->conn_count_added = true;
-        mysql_mutex_unlock(&global_proxy_config.config_lock);
+      // global_proxy_config.config_write_lock();
+      my_atomic_add64(&proxy_user->conn_count, 1UL);
+      my_atomic_store32(&mpvio->thd->conn_count_added, 1);
+      // global_proxy_config.config_unlock();
     }
 
     DBUG_RETURN(false);
@@ -12415,7 +12426,7 @@ static bool find_mpvio_user(MPVIO_EXT *mpvio, char* passwd)
 
   // mysql_mutex_lock(&acl_cache->lock);
 
-  if (mpvio->thd->connection_type == PROXY_CONNECT_SHELL)
+  if (unlikely(mpvio->thd->connection_type == PROXY_CONNECT_SHELL))
   {
       mpvio->acl_user = create_shell_user(mpvio->thd, mpvio->thd->mem_root);
   }
@@ -12798,6 +12809,15 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
 
   char *next_field;
   char *client_plugin= next_field= passwd + passwd_len + (db ? db_len + 1 : 0);
+  
+  const char *client_auth_plugin_tmp=
+    ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
+
+  if (client_auth_plugin_tmp &&
+      my_strcasecmp(system_charset_info, client_plugin, client_auth_plugin_tmp))
+  {
+    mpvio->cached_client_reply.plugin= client_plugin;
+  }
 
   /* Since 4.1 all database names are stored in utf8 */
   if (thd->copy_with_error(system_charset_info, &mpvio->db,
@@ -12912,21 +12932,23 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
     the authentication on the client. Do it here, the server plugin
     doesn't need to know.
   */
-  // const char *client_auth_plugin=
-  //   ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
+  const char *client_auth_plugin=
+    ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
 
-  // if (client_auth_plugin &&
-  //     my_strcasecmp(system_charset_info, client_plugin, client_auth_plugin))
-  // {
-  //   mpvio->cached_client_reply.plugin= client_plugin;
-  //   if (send_plugin_request_packet(mpvio,
-  //                                  (uchar*) mpvio->cached_server_packet.pkt,
-  //                                  mpvio->cached_server_packet.pkt_len))
-  //     return packet_error;
-  //
-  //   passwd_len= my_net_read(&thd->net);
-  //   passwd= (char*)thd->net.read_pos;
-  // }
+  if (client_auth_plugin &&
+      my_strcasecmp(system_charset_info, client_plugin, client_auth_plugin))
+  {
+    mpvio->cached_client_reply.plugin= client_plugin;
+    if (send_plugin_request_packet(mpvio,
+                                   (uchar*) mpvio->cached_server_packet.pkt,
+                                   mpvio->cached_server_packet.pkt_len))
+      return packet_error;
+
+    passwd_len = my_net_read(&thd->net);
+    passwd = (char *)thd->net.read_pos;
+    if (mpvio->thd->connection_type == PROXY_CONNECT_PROXY && proxy_connect_cluster(mpvio, passwd))
+      return packet_error;
+  }
 
   *buff= (uchar*) passwd;
   return passwd_len;

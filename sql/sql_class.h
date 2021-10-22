@@ -48,6 +48,7 @@
 #include <mysql_com_server.h>
 #include "session_tracker.h"
 #include "sql_rules.h"
+#include <map>
 //#include "rdkafka.h"
 
 #define __CONSISTEND_READ__ 1
@@ -274,9 +275,26 @@ struct proxy_config_struct{
     HASH proxy_user;
 
     mysql_mutex_t config_lock;
+    mysql_rwlock_t config_rwlock;
+
     mysql_mutex_t white_ip_lock;
     mysql_mutex_t current_weight_lock;
     volatile bool setting;
+
+    void config_read_lock()
+    {
+      mysql_rwlock_rdlock(&this->config_rwlock);
+    }
+    
+    void config_unlock()
+    {
+      mysql_rwlock_unlock(&this->config_rwlock);
+    }
+
+    void config_write_lock()
+    {
+      mysql_rwlock_wrlock(&this->config_rwlock);
+    }
 };
 
 typedef struct config_element_struct config_element_t;
@@ -328,8 +346,8 @@ struct proxy_user_struct{
     /* the space is not enough when set too much dbs*/
     char  dbname[HOSTNAME_LENGTH + 1];
     char  hash_key[HOSTNAME_LENGTH * 2 + 1];
-    ulong max_connections;
-    ulong conn_count;
+    int64 max_connections;
+    volatile int64 conn_count;
 };
 
 typedef struct backend_conn_struct backend_conn_t;
@@ -354,6 +372,7 @@ struct backend_conn_struct {
     ulong autocommit;
     ulong start_timer;
     volatile bool inited;
+    volatile bool lazy_conn_needed;
     volatile bool conn_async_inited;
     volatile bool conn_async_complete;
     proxy_servers_t* server;
@@ -376,29 +395,15 @@ struct backend_conn_struct {
     }
 
     void set_mysql(void *mysql) { m_mysql = mysql; }
-    bool conn_inited() {
-      if (inited)
-        return true;
-      int times = 0;
-      while (conn_async_inited && !conn_async_complete) {
-        /*
-        my_sleep(1000); // 1ms
-        times++;
-        if(times >= 5000) {
-          break;
-        }
-        */
-        /* not to wait */
-        break;
-      }
-      return inited;
-    }
+    bool conn_inited(bool lazy_conn = false);
+
     backend_conn_struct() {
       async_thd = NULL;
       m_mysql = NULL;
       conn_async_inited = false;
       conn_async_complete = false;
       inited = false;
+      lazy_conn_needed = false;
     }
 };
 
@@ -588,7 +593,7 @@ struct format_cache_node_struct
 
     uint64_t digest;
     int                 rule_logged;
-
+    char                route_server_name[MAX_HOSTNAME];
     LIST_NODE_T(format_cache_node_t)         link;
 };
 
@@ -598,8 +603,57 @@ struct format_cache_struct
     LIST_BASE_NODE_T(format_cache_node_t)    field_lst;
 };
 
+#define ARKPROXY_DEBUG_EXECUTE(CODE, EXPR)           \
+  do                                                 \
+  {                                                  \
+    if (unlikely(proxy_log_message_enabled == CODE)) \
+    {                                                \
+      EXPR                                           \
+    }                                                \
+  } while (0)
+
 // int config_add_new_group(char* group_name);
 // int proxy_init_groups();
+class proxy_auth_passwd_manager
+{
+private:
+
+public:
+  class proxy_auth_user
+  {
+    public:
+    char user[USERNAME_CHAR_LENGTH + 1];
+    char host[HOSTNAME_LENGTH + 1];
+    /* the space is not enough when set too much dbs*/
+    char pass[65];
+    char priv[65];
+  };
+
+  mysql_rwlock_t proxy_user_rwlock;
+
+  typedef std::vector<proxy_auth_user *> proxy_user_list;
+  std::map<std::string, proxy_user_list> proxy_user_map;
+
+  proxy_auth_passwd_manager()
+  {
+    mysql_rwlock_init(key_rwlock_proxy_auth_users, &proxy_user_rwlock);
+  }
+
+  ~proxy_auth_passwd_manager()
+  {
+    mysql_rwlock_destroy(&proxy_user_rwlock);
+  }
+
+  bool load_all_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password);
+  bool load_auth_passwd(THD *thd, char *user, char *host, char *ip, char *password);
+  bool user_auth_match(THD *thd, char *user, char *host, char *ip, char *password, proxy_auth_user *auth_user);
+  bool evict_user_auth(char* user, bool need_lock);
+  void evict_all();
+};
+
+void proxy_user_manager_init();
+void proxy_user_manager_deinit();
+
 
 extern proxy_config_t global_proxy_config;
 
@@ -4958,7 +5012,7 @@ public:
   }
     
 public:
-    int conn_count_added;
+    volatile int conn_count_added;
     uint8 server_hash_stage1[64];
     backend_conn_t cluster_fixed_conn;
     backend_conn_t* last_conn;

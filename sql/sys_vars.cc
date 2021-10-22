@@ -4981,7 +4981,23 @@ static Sys_var_mybool Sys_proxy_async_backend_connect(
        "proxy_async_connect_server", "async to connect backend server or not",
        GLOBAL_VAR(proxy_async_connect_server), CMD_LINE(OPT_ARG), DEFAULT(FALSE),
        NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL,NULL, 0, 0);
-       
+
+static Sys_var_mybool Sys_proxy_user_cache_on(
+    "proxy_user_cache_on", "use cache for proxy user auth",
+    GLOBAL_VAR(proxy_user_cache_on), CMD_LINE(OPT_ARG), DEFAULT(TRUE),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL, NULL, 0, 0);
+
+static Sys_var_mybool Sys_proxy_lazy_connect_on(
+    "proxy_lazy_connect_on", "lazy connect to read server",
+    GLOBAL_VAR(proxy_lazy_connect_on), CMD_LINE(OPT_ARG), DEFAULT(TRUE),
+    NO_MUTEX_GUARD, NOT_IN_BINLOG, NULL, NULL, 0, 0);
+
+static Sys_var_ulong Sys_proxy_log_message_enabled(
+    "proxy_log_message_enabled", "enable proxy trace log for debug",
+    GLOBAL_VAR(proxy_log_message_enabled), CMD_LINE(REQUIRED_ARG),
+    VALID_RANGE(0, ULONG_MAX), DEFAULT(0), BLOCK_SIZE(1),
+    NULL, NOT_IN_BINLOG, NULL, NULL, 0, 0);
+
 static Sys_var_double Sys_proxy_net_buffer_outlier_scale(
        "proxy_net_buffer_outlier_scale", "scale to the average net packet size"
        " in the queue, to determine if the new buffer is an outlier buffer",

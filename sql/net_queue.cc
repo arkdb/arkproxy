@@ -1413,7 +1413,7 @@ int mysql_push_execute_queue(THD* thd, backend_conn_t* conn)
     {
         set_ark_env(thd, conn);
         if (proxy_digest_on(thd) && thd->get_command() == COM_QUERY)
-            proxy_format_to_queue_after(thd, (exe_time_2 - exe_time_1), affect_rows);
+            proxy_format_to_queue_after(thd, (exe_time_2 - exe_time_1), affect_rows, conn->server->server_name);
 #if __CONSISTEND_READ__
         proxy_consistend_cache_update_global(thd, conn);
 #endif 
@@ -1712,7 +1712,7 @@ int proxy_heartbeat_queue_low(THD* thd, THD* exe_thd, int count, backend_conn_t*
         /* if connection is valid and the time since last heartbeat is 
          * more then half of wait_timeout, do heartbeat again */
         /* if the connection is invalid, then skip it */
-        if (!conn || !conn->conn_inited())
+        if (!conn || conn->lazy_conn_needed || !conn->conn_inited())
             continue;
         if (conn->wait_timeout * 500000 < currtime - conn->last_heartbeat ||
             proxy_server_heartbeat_period * 1000000 < currtime - conn->last_heartbeat)
@@ -1775,7 +1775,7 @@ int proxy_timer_checker(THD* thd)
         for (i = 0; i < thd->read_conn_count; i++)
         {
             conn = thd->read_conn[i];
-            if (!conn || !conn->conn_inited())
+            if (!conn || conn->lazy_conn_needed || !conn->conn_inited())
                 continue;
             mysql_fetch_server_status(conn);
         }
@@ -1791,7 +1791,7 @@ int proxy_timer_checker(THD* thd)
         for (i = 0; i < thd->read_conn_count; i++)
         {
             conn = thd->read_conn[i];
-            if (!conn || !conn->conn_inited() || !conn->consistend_cache)
+            if (!conn || conn->lazy_conn_needed || !conn->conn_inited() || !conn->consistend_cache)
                 continue;
             mysql_fetch_slave_consistend_read_table(conn);
         }
@@ -1965,9 +1965,9 @@ int mysql_init_net_queue(THD* thd)
     thd->write_conn_count = 0;
     thd->read_conn_count = 0;
     thd->first_request = true;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     load_balance_for_server(thd);
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     thd->query_rule = (query_rules_t*)my_malloc(sizeof(query_rules_t), MYF(0));
     thd->query_rule->qpo = NULL;

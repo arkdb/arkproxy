@@ -2084,7 +2084,7 @@ int proxy_config_flush(THD* thd)
     if (proxy_skip_sync_config_cluster(thd))
         goto end;
 
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_write_lock();
     LIST_INIT(thd->config_cache->sync_lst);
     global_proxy_config.setting = true;
     ele = LIST_GET_FIRST(thd->config_cache->config_lst);
@@ -2094,7 +2094,7 @@ int proxy_config_flush(THD* thd)
         if (proxy_config_flush_low(thd, ele))
         {
             global_proxy_config.setting = false;
-            mysql_mutex_unlock(&global_proxy_config.config_lock);
+            global_proxy_config.config_unlock();
             return true;
         }
 
@@ -2115,7 +2115,7 @@ int proxy_config_flush(THD* thd)
         proxy_load_rules();
 
     global_proxy_config.setting = false;
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     if (proxy_sync_config_cluster(thd, (char*)"config flush"))
     {
@@ -2140,12 +2140,16 @@ proxy_set_threads_reload(THD* thd)
         my_ok(thd);
         return false;
     }
+    global_proxy_config.config_write_lock();
 
-    if (proxy_config_reload())
-    {
-        return true;
-    }
-  
+    /**
+     * 1. 修改reconfig逻辑，先config write lock然后设置thd->reconfig，再去reload。
+     * 
+     * 2. 正常sql判断reconfig时必然就会去执行proxy_reconnect_servers, 进而请求config_read_lock被阻塞。
+     * 
+     * 3. 无需reconfig时，如果mysql连接已经建立，不会用到server的信息。mysql如果未建立，则可能属于延迟连接时，会先获取config_read_lock然后再次判断reconfig，保证原子性，否则延迟连接判断无需reconfig则会去使用conn->server连接后端，这里server可能已经被释放了。
+    */
+   
     mysql_mutex_lock(&LOCK_thread_count); // For unlink from list
     I_List_iterator<THD> it(threads);
     THD *tmp;
@@ -2160,6 +2164,13 @@ proxy_set_threads_reload(THD* thd)
     }
 
     mysql_mutex_unlock(&LOCK_thread_count);
+
+    if (proxy_config_reload())
+    {
+        return true;
+    }
+
+    global_proxy_config.config_unlock();
 
     if (proxy_sync_config_cluster(thd, (char*)"config reload"))
         return true;
@@ -2279,7 +2290,7 @@ void proxy_show_config_cache(THD *thd)
                 protocol->store(ele->server_name, system_charset_info);
                 protocol->store(ele->sub_command == SERVER_STATUS_ONLINE ? 
                     "ONLINE" : "OFFLINE", system_charset_info);
-                mysql_mutex_lock(&global_proxy_config.config_lock);
+                global_proxy_config.config_read_lock();
                 server = LIST_GET_FIRST(global_proxy_config.server_lst);
                 while (server)
                 {
@@ -2295,7 +2306,7 @@ void proxy_show_config_cache(THD *thd)
                 {
                     protocol->store("OFFLINE", system_charset_info);
                 }
-                mysql_mutex_unlock(&global_proxy_config.config_lock);
+                global_proxy_config.config_unlock();
 
                 protocol->write();
             }
@@ -2520,7 +2531,7 @@ void mysqld_list_backend_servers(THD *thd,const char *user, bool verbose)
         DBUG_VOID_RETURN;
 
     int id=0;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     server = LIST_GET_FIRST(global_proxy_config.server_lst);
     while (server)
     {
@@ -2539,7 +2550,7 @@ void mysqld_list_backend_servers(THD *thd,const char *user, bool verbose)
 
         server = LIST_GET_NEXT(link, server);
     }
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     my_eof(thd);
     DBUG_VOID_RETURN;
@@ -2588,7 +2599,7 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         DBUG_VOID_RETURN;
 
     int id=0;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     server_node = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server_node)
     {
@@ -2631,9 +2642,7 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         }
         protocol->write();
     }
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
 
-    mysql_mutex_lock(&global_proxy_config.config_lock);
     server = LIST_GET_FIRST(global_proxy_config.server_lst);
     while (server)
     {
@@ -2653,7 +2662,7 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         server = LIST_GET_NEXT(link, server);
     }
 
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
     my_eof(thd);
     DBUG_VOID_RETURN;
 }
@@ -3003,6 +3012,8 @@ void mysqld_list_backend_connections(THD *thd,const char *user, bool verbose)
                 protocol->store(conn->md5_hash, system_charset_info);
                 if (conn->conn_inited() && conn->server)
                     protocol->store(conn->server->backend_host, system_charset_info);
+                else if (conn->lazy_conn_needed)
+                    protocol->store("waiting for connected", system_charset_info);
                 else
                     protocol->store("NULL", system_charset_info);
 
@@ -3037,6 +3048,8 @@ void mysqld_list_backend_connections(THD *thd,const char *user, bool verbose)
                 protocol->store(conn->md5_hash, system_charset_info);
                 if (conn->conn_inited() && conn->server)
                     protocol->store(conn->server->backend_host, system_charset_info);
+                else if (conn->lazy_conn_needed)
+                    protocol->store("waiting for connected", system_charset_info);
                 else
                     protocol->store("NULL", system_charset_info);
                 protocol->store_long(conn->port);
@@ -3192,7 +3205,7 @@ void proxy_rule_full_status(THD* thd)
         DBUG_VOID_RETURN;
     
     int id=0;
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     for (std::vector<QP_rule_t *>::iterator it=global_proxy_config.rules.begin(); 
         it!=global_proxy_config.rules.end(); ++it) 
     {
@@ -3218,7 +3231,7 @@ void proxy_rule_full_status(THD* thd)
         protocol->write();
     }
 
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
    
     my_eof(thd);
     DBUG_VOID_RETURN;
@@ -3410,7 +3423,7 @@ int proxy_config_write(THD* thd)
     write_status_array_for_proxy(thd, enumerate_sys_vars(thd, true, OPT_GLOBAL), &config_str);
     write_out_var_exceptions("core-file", &config_str);
 
-    mysql_mutex_lock(&global_proxy_config.config_lock);
+    global_proxy_config.config_read_lock();
     servers = LIST_GET_FIRST(global_proxy_config.server_lst);
     while (servers)
     {
@@ -3536,7 +3549,7 @@ int proxy_config_write(THD* thd)
         router = LIST_GET_NEXT(link, router);
     }
 
-    mysql_mutex_unlock(&global_proxy_config.config_lock);
+    global_proxy_config.config_unlock();
 
     fwrite(str_get(&config_str), str_get_len(&config_str), 1, outfile);
     fclose(outfile);

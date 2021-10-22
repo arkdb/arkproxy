@@ -2447,6 +2447,8 @@ void mysqld_stmt_prepare(THD *thd, const char *packet, uint packet_length)
   else
     thd->set_last_stmt(stmt);
 
+  delete stmt;
+  
   thd->protocol= save_protocol;
 
   sp_cache_enforce_limit(thd->sp_proc_cache, stored_program_cache_size);
@@ -3667,7 +3669,7 @@ bool Prepared_statement::prepare(const char *packet, uint packet_len)
   proxy_dispatch_query(thd);
 
   if (proxy_digest_on(thd))
-      proxy_format_to_queue_after(thd, 0, 0);
+      proxy_format_to_queue_after(thd, 0, 0, thd->last_conn ? thd->last_conn->server->server_name : "");
 
   // if (error == 0)
   //   error= check_prepared_statement(this);

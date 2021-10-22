@@ -327,6 +327,9 @@ extern char proxy_local_ip[256];
 extern char* proxy_white_ips;
 extern my_bool proxy_white_ips_on_update;
 extern my_bool proxy_async_connect_server;
+extern my_bool proxy_user_cache_on;
+extern my_bool proxy_lazy_connect_on;
+extern ulong proxy_log_message_enabled;
 extern double proxy_net_buffer_outlier_scale;
 extern ulong proxy_net_per_buffer_max_size;
 
@@ -371,8 +374,8 @@ extern PSI_mutex_key key_TABLE_SHARE_LOCK_share, key_LOCK_stats,
 extern PSI_mutex_key key_LOCK_gtid_waiting;
 
 extern PSI_rwlock_key key_rwlock_LOCK_grant, key_rwlock_LOCK_logger,
-  key_rwlock_LOCK_sys_init_connect, key_rwlock_LOCK_sys_init_slave,
-  key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock;
+    key_rwlock_LOCK_sys_init_connect, key_rwlock_LOCK_sys_init_slave,
+    key_rwlock_LOCK_system_variables_hash, key_rwlock_query_cache_query_lock, key_rwlock_proxy_auth_users,key_rwlock_global_config;
 
 #ifdef HAVE_MMAP
 extern PSI_cond_key key_PAGE_cond, key_COND_active, key_COND_pool;
