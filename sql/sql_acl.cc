@@ -12380,11 +12380,6 @@ retry_get_auth:
 
     mpvio->acl_user = create_shell_user_proxy(mpvio->thd, mpvio->thd->mem_root, sha1_pass);
 
-    if (mpvio->cached_client_reply.plugin && strcasecmp(mpvio->cached_client_reply.plugin, "caching_sha2_password") == 0)
-    {
-      DBUG_RETURN(false);
-    }
-
     caculate_first_stage_hash1((const uchar*)passwd, (const char*)mpvio->thd->scramble, 
         (const uint8 *)mpvio->thd->server_hash_stage1, (const uint8 *)mpvio->acl_user->salt);
 
@@ -12867,6 +12862,23 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
   }
 
   thd->password= passwd_len > 0;
+
+  const char *client_auth_plugin=
+    ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
+
+  if (client_auth_plugin &&
+      my_strcasecmp(system_charset_info, client_plugin, client_auth_plugin))
+  {
+    mpvio->cached_client_reply.plugin= client_plugin;
+    if (send_plugin_request_packet(mpvio,
+                                   (uchar*) mpvio->cached_server_packet.pkt,
+                                   mpvio->cached_server_packet.pkt_len))
+      return packet_error;
+
+    passwd_len = my_net_read(&thd->net);
+    passwd = (char *)thd->net.read_pos;
+  }
+
   if (find_mpvio_user(mpvio, passwd))
     return packet_error;
     
@@ -12932,23 +12944,6 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
     the authentication on the client. Do it here, the server plugin
     doesn't need to know.
   */
-  const char *client_auth_plugin=
-    ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
-
-  if (client_auth_plugin &&
-      my_strcasecmp(system_charset_info, client_plugin, client_auth_plugin))
-  {
-    mpvio->cached_client_reply.plugin= client_plugin;
-    if (send_plugin_request_packet(mpvio,
-                                   (uchar*) mpvio->cached_server_packet.pkt,
-                                   mpvio->cached_server_packet.pkt_len))
-      return packet_error;
-
-    passwd_len = my_net_read(&thd->net);
-    passwd = (char *)thd->net.read_pos;
-    if (mpvio->thd->connection_type == PROXY_CONNECT_PROXY && proxy_connect_cluster(mpvio, passwd))
-      return packet_error;
-  }
 
   *buff= (uchar*) passwd;
   return passwd_len;

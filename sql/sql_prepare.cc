@@ -3666,6 +3666,9 @@ bool Prepared_statement::prepare(const char *packet, uint packet_len)
 
   thd->set_query((char*)packet, packet_len, system_charset_info);
 
+  if (thd->spcont == NULL)
+    general_log_write(thd, COM_STMT_PREPARE, thd->query(), thd->query_length());
+
   proxy_dispatch_query(thd);
 
   if (proxy_digest_on(thd))
@@ -3736,9 +3739,9 @@ bool Prepared_statement::prepare(const char *packet, uint packet_len)
       we're inside a stored procedure (also called Dynamic SQL) --
       sub-statements inside stored procedures are not logged into
       the general log.
+      if (thd->spcont == NULL)
+        general_log_write(thd, COM_STMT_PREPARE, query(), query_length());
     */
-    if (thd->spcont == NULL)
-      general_log_write(thd, COM_STMT_PREPARE, query(), query_length());
   }
   DBUG_RETURN(error);
 }
