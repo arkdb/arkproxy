@@ -2447,6 +2447,8 @@ void mysqld_stmt_prepare(THD *thd, const char *packet, uint packet_length)
   else
     thd->set_last_stmt(stmt);
 
+  delete stmt;
+  
   thd->protocol= save_protocol;
 
   sp_cache_enforce_limit(thd->sp_proc_cache, stored_program_cache_size);

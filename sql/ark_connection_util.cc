@@ -1616,13 +1616,6 @@ retry:
     // }
     global_proxy_config.config_unlock();
 
-    bool conn_available = false;
-    if (!proxy_async_connect_server && normal_count != connection_count) {
-        conn_available = true;
-    }
-
-    if (proxy_async_connect_server)
-        conn_available = true;
     /* if no ok connection build */
     if (!conn_available)
     {

@@ -4,3 +4,4 @@ tags
 empty.c
 .*
 release*
+debug*

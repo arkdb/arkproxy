@@ -12347,13 +12347,13 @@ retry_get_auth:
         sctx->set_user(new_user_hash);
         if (opt_proxy_reserve_client_address || 
             !get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-              (char*)NULL, server_user_ip, sha1_pass))
+              (char*)NULL, proxy_local_ip, sha1_pass))
         {
             /* if the hash user name is not existed, then find the 
              * not hash user name, in case the % ips is set */
             sctx->set_user(sctx->external_user);
             if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-                  (char*)NULL, server_user_ip, sha1_pass))
+                  (char*)NULL, proxy_local_ip, sha1_pass))
             {
                 login_failed_error(mpvio->thd);
                 DBUG_RETURN(1);
@@ -12365,14 +12365,14 @@ retry_get_auth:
              || strcasecmp(sctx->ip, "127.0.0.1") == 0))
     {
         if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-              (char*)NULL, server_user_ip, sha1_pass))
+              (char*)NULL, proxy_local_ip, sha1_pass))
         {
             login_failed_error(mpvio->thd);
             DBUG_RETURN(1);
         }
     }
     else if (!get_cluster_auth_passwd(mpvio->thd, sctx->user, 
-          (char*)sctx->host_or_ip, (char*)server_user_ip, sha1_pass))
+          (char*)sctx->host_or_ip, (char*)proxy_local_ip, sha1_pass))
     {
         login_failed_error(mpvio->thd);
         DBUG_RETURN(1);
