@@ -1214,6 +1214,7 @@ int proxy_delete_server(THD* thd, config_element_t* ele)
     proxy_server_t* server_node;
     proxy_servers_t* server;
     int entered = false;
+    proxy_server_t* server_next;
     char tmp[512];
 
     server = LIST_GET_FIRST(global_proxy_config.server_lst);
@@ -1243,18 +1244,27 @@ int proxy_delete_server(THD* thd, config_element_t* ele)
     server_node = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server_node)
     {
+        server_next = LIST_GET_NEXT(link, server_node);
         server = server_node->server;
         if (!strcmp(ele->server_name, server->server_name))
         {
             LIST_REMOVE(link, global_proxy_config.rw_server_lst, server_node);
         }
-        server_node = LIST_GET_NEXT(link, server_node);
-        if (server_node == NULL && !entered)
-        {
-            entered = true;
-            server_node = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
-        }
+        server_node = server_next;
     }
+
+    server_node = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
+    while (server_node)
+    {
+        server_next = LIST_GET_NEXT(link, server_node);
+        server = server_node->server;
+        if (!strcmp(ele->server_name, server->server_name))
+        {
+            LIST_REMOVE(link, global_proxy_config.ro_server_lst, server_node);
+        }
+        server_node = server_next;
+    }
+
     global_proxy_config.config_version++;
     return false;
 }
@@ -2860,7 +2870,7 @@ int proxy_config_write(THD* thd)
 {
     str_t config_str;
     FILE* outfile;
-    char err[256];
+    char err[512];
     proxy_servers_t* servers;
     proxy_server_t* server;
     proxy_router_t* router;
@@ -2882,6 +2892,14 @@ int proxy_config_write(THD* thd)
         path = (char*)my_defaults_file;
         outfile = fopen(my_defaults_file, "w+");
     }
+
+    if (strlen(path) > 256)
+    {
+        sprintf(err, "config outfile path is too long");
+        my_error(ER_CONFIG_ERROR, MYF(0), err);
+        return true;
+    }
+
     if (outfile == NULL)
     {
         sprintf(err, "Config outfile '%s' is invalid", path);
