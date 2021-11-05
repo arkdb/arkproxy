@@ -405,15 +405,17 @@ bool add_to_server_list(char* servers, int type, proxy_router_t* route)
                 (proxy_server_t*)my_malloc(sizeof(proxy_server_t), MY_ZEROFILL);
             tmp_server->route = route;
             tmp_server->server = server;
-            if (type == ROUTER_TYPE_RW)
-            {
-                LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, tmp_server);
-                if (server->server_status == SERVER_STATUS_ONLINE)
-                    count++;
+            if (type == ROUTER_TYPE_RW) {
+              LIST_ADD_LAST(link, global_proxy_config.rw_server_lst,
+                            tmp_server);
+              if (server->server_status == SERVER_STATUS_ONLINE)
+                count++;
+              server->routed |= ROUTED_TYPE::WRITE_ROUTED;
+            } else {
+              LIST_ADD_LAST(link, global_proxy_config.ro_server_lst,
+                            tmp_server);
+              server->routed |= ROUTED_TYPE::READ_ROUTED;
             }
-            else
-                LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, tmp_server);
-            server->routed = true;
 //            if (route->comments)
 //            {
 //                tmp_server->route->comments = 

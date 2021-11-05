@@ -200,6 +200,10 @@ struct proxy_router_struct
     LIST_NODE_T(proxy_router_t) link;
     char* comments;
 };
+enum ROUTED_TYPE { NOT_ROUTED = 0, WRITE_ROUTED = 1, READ_ROUTED = 2 };
+
+#define WITH_READ_ROUTED(routed) (routed & ROUTED_TYPE::READ_ROUTED)
+#define WITH_WRITE_ROUTED(routed) (routed & ROUTED_TYPE::WRITE_ROUTED)
 
 typedef struct proxy_servers_struct proxy_servers_t;
 struct proxy_servers_struct
@@ -210,12 +214,12 @@ struct proxy_servers_struct
     volatile ulong weight;
     volatile int current_weight; /* used for short connection load balance */
     char* comments;
-    int routed;
-    int reconnect; /* need to reconnect */
+    volatile int routed{ROUTED_TYPE::NOT_ROUTED};
+    // int reconnect; /* need to reconnect */
     volatile ulong max_slave_lag;
     volatile int server_status;
-    volatile bool noread_routed; /* whether to routed read */
-    volatile bool nowrite_routed;/* whether to routed write */
+    // volatile bool noread_routed; /* whether to routed read */
+    // volatile bool nowrite_routed;/* whether to routed write */
     LIST_NODE_T(proxy_servers_t) link;
 };
 
@@ -231,7 +235,7 @@ struct proxy_server_struct
 {
     proxy_servers_t* server;
     proxy_router_t* route;
-    int build_connection; /* need to route */
+    // int build_connection; /* need to route */
     LIST_NODE_T(proxy_server_t) link;
 };
 
@@ -373,8 +377,6 @@ struct backend_conn_struct {
     ulong start_timer;
     volatile bool inited;
     volatile bool lazy_conn_needed;
-    volatile bool conn_async_inited;
-    volatile bool conn_async_complete;
     proxy_servers_t* server;
     ulonglong last_heartbeat;
     ulonglong last_execute;
@@ -384,8 +386,8 @@ struct backend_conn_struct {
     int current_weight;
     ulonglong qps;
     THD* thd;
-    THD* async_thd;
-
+    bool server_flag;
+    
     LIST_NODE_T(backend_conn_t) link;
 
     void *get_mysql(bool wait_inited = true) { 
@@ -398,10 +400,7 @@ struct backend_conn_struct {
     bool conn_inited(bool lazy_conn = false);
 
     backend_conn_struct() {
-      async_thd = NULL;
       m_mysql = NULL;
-      conn_async_inited = false;
-      conn_async_complete = false;
       inited = false;
       lazy_conn_needed = false;
     }

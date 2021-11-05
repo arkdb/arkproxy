@@ -1131,15 +1131,14 @@ void proxy_change_user(THD* thd, NET *net, char* packet, uint packet_length)
 
 int proxy_connection_can_route_read(backend_conn_t* conn)
 {
-    int slave_lag = conn->slave_lag != 0 && conn->slave_lag != ULONG_MAX
-    && conn->server->max_slave_lag < conn->slave_lag;
-    int can_route = !slave_lag && conn->conn_inited() &&
-    conn->server->server_status == SERVER_STATUS_ONLINE;
+    int slave_lag = conn->slave_lag != 0 && conn->slave_lag != ULONG_MAX && conn->server->max_slave_lag < conn->slave_lag;
+    int can_route = !slave_lag && WITH_READ_ROUTED(conn->server->routed) &&
+                    conn->server->server_status == SERVER_STATUS_ONLINE;
 
     if (proxy_lazy_connect_on && conn->lazy_conn_needed)
         return can_route;
 
-    return can_route && !conn->server->noread_routed;
+    return can_route && conn->conn_inited();
 }
 
 backend_conn_t* get_first_request_best_conn(THD* thd)
@@ -1158,13 +1157,15 @@ re_route:
         int can_route = proxy_connection_can_route_read(conn);
         conn->server->current_weight += can_route ? conn->server->weight : 0; //update server's current_weight
         total_weight += can_route ? conn->server->weight : 0;
-        if (can_route && conn->autocommit && thd->first_request && conn->server == thd->first_request_best_server)
-        {
-            best = conn;
+        if (can_route && (conn->autocommit || conn->lazy_conn_needed) &&
+            thd->first_request &&
+            conn->server == thd->first_request_best_server) {
+          best = conn;
         }
     }
 
-    if(best && !best->conn_inited(true)) {
+    // lazy_conn_needed失败, 或者not autocommit
+    if(best && (!best->conn_inited(true) || !best->autocommit)) {
         DBUG_ASSERT(best->lazy_conn_needed == false);
         DBUG_ASSERT(proxy_lazy_connect_on);
         goto re_route;
@@ -1202,14 +1203,14 @@ re_route:
         total_weight += can_route ? conn->server->weight : 0;
 
         /* if the conn is not autocommit, then this read node is not routed */
-        if (can_route && conn->autocommit && 
-            (best == NULL || conn->current_weight > best->current_weight))
-        {
-            best = conn;
+        if (can_route && (conn->autocommit || conn->lazy_conn_needed) &&
+            (best == NULL || conn->current_weight > best->current_weight)) {
+          best = conn;
         }
     }
 
-    if (best && !best->conn_inited(true))
+    // lazy_conn_needed失败, 或者not autocommit
+    if (best && (!best->conn_inited(true) || !best->autocommit))
     {
         DBUG_ASSERT(best->lazy_conn_needed == false);
         DBUG_ASSERT(proxy_lazy_connect_on);
@@ -1232,9 +1233,9 @@ int proxy_connection_can_route_write(
     backend_conn_t* conn 
 )
 {
-    if (conn->conn_inited() && 
+    if (conn->conn_inited(true) && 
         conn->server->server_status == SERVER_STATUS_ONLINE &&
-        !conn->server->nowrite_routed)
+        WITH_WRITE_ROUTED(conn->server->routed))
         return true;
 
     return false;
@@ -1382,12 +1383,6 @@ bool close_backend_conn(backend_conn_t *conn) {
     conn->set_mysql(NULL);
   }
   conn->inited = false;
-  conn->conn_async_complete = false;
-  conn->conn_async_inited = false;
-  if (conn->async_thd) {
-    delete conn->async_thd;
-    conn->async_thd = NULL;
-  }
 }
 
 pthread_handler_t proxy_reconnect_server_thread(void* arg)
@@ -1424,7 +1419,6 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     server = conn->server;
     MYSQL* mysql = mysql_init(NULL);
     conn->set_mysql(mysql);
-    conn->conn_async_complete = false;
     mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, (char *) &connect_timeout);
     mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, (char *) &net_timeout);
     mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, (char *) &net_timeout);
@@ -1432,9 +1426,6 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     // mysql_options(mysql, MYSQL_SET_CHARSET_DIR, (char *) charsets_dir);
     mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
-    if (current_thd == NULL && conn->async_thd) {
-        set_current_thd(conn->async_thd);
-    }
     char* db = NULL;
     if(thd->db && thd->db[0] != '\0') {
         db = thd->db;
@@ -1468,7 +1459,6 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     conn->inited = true;
 end:
     conn->lazy_conn_needed = false;
-    conn->conn_async_complete = true;
     return err;
 }
 
@@ -1543,44 +1533,14 @@ retry:
         
         if (!conn->conn_inited() && server->server_status == SERVER_STATUS_ONLINE)
         {
-            if (proxy_async_connect_server) {
-                // async_thd should be create in this thread, 
-                // otherwise it will cause dead lock if other threads are waiting of conn inited
-                if (!conn->async_thd) {
-                    conn->async_thd = new THD(0);
-                }
-                conn->conn_async_inited = false;
-                conn->conn_async_complete = false;
-                pthread_t thread_id;
-                conn->thd = thd;
-                int error;
-                if ((error = mysql_thread_create(NULL, &thread_id, NULL, 
-                        proxy_reconnect_server_thread, (void*)conn)))
-                {
-                    mysql_mutex_unlock(&global_proxy_config.config_lock);
-                    login_failed_error(thd);
-                    my_error(ER_CANT_CREATE_THREAD, MYF(ME_FATALERROR), error);
-                    sql_print_warning("arkproxy create server thread failed(%d)", error);
-                    return true;
-                }
-
-                pthread_detach_this_thread();
-                /*
-                std::thread t(proxy_reconnect_server, thd, conn);
-                t.detach();
-                */
-                // wait for all threads to complete before closing conn
-                conn->conn_async_inited = true;
-            } else {
-                normal_count++;
-                if(proxy_reconnect_server(thd, conn))
-                {
-                    connection_count++;
-                }
-                else if (!entered)
-                {
-                    write_conn_count++;
-                }
+            normal_count++;
+            if(proxy_reconnect_server(thd, conn))
+            {
+                connection_count++;
+            }
+            else if (!entered)
+            {
+                write_conn_count++;
             }
         }
 
@@ -1861,16 +1821,7 @@ bool backend_conn_struct::conn_inited(bool lazy_conn)
     if (inited)
         return true;
     int times = 0;
-    while (conn_async_inited && !conn_async_complete)
-    {
-        // 1ms
-        my_sleep(1000);
-        times++;
-        if (times >= 5000)
-        {
-            break;
-        }
-    }
+
     if (lazy_conn_needed && lazy_conn)
     {
         global_proxy_config.config_read_lock();

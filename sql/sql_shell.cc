@@ -430,10 +430,12 @@ int proxy_config_delete_route(THD* thd)
     {
         if (!strcasecmp(server_real->server_name, config_ele->server_name))
         {
-            if ((config_ele->type == ROUTER_TYPE_RO && server_real->noread_routed) ||
-                (config_ele->type == ROUTER_TYPE_RW && server_real->nowrite_routed))
-                can_delete = true;
-            break;
+          if ((config_ele->type == ROUTER_TYPE_RO &&
+               !WITH_READ_ROUTED(server_real->routed)) ||
+              (config_ele->type == ROUTER_TYPE_RW &&
+               !WITH_WRITE_ROUTED(server_real->routed)))
+            can_delete = true;
+          break;
         }
 
         server_real = LIST_GET_NEXT(link, server_real);
@@ -1444,16 +1446,16 @@ int proxy_onoffline_route(THD* thd, config_element_t* ele)
     if (thd->lex->table_count == true)
     {
         if (ele->type == ROUTER_TYPE_RO)
-            server->noread_routed = false;
+            server->routed |= ROUTED_TYPE::READ_ROUTED;
         else
-            server->nowrite_routed = false;
+            server->routed |= ROUTED_TYPE::WRITE_ROUTED;
     }
     else 
     {
         if (ele->type == ROUTER_TYPE_RW)
-            server->nowrite_routed = true;
+            server->routed &= ~ROUTED_TYPE::WRITE_ROUTED;
         else
-            server->noread_routed = true;
+            server->routed &= ~ROUTED_TYPE::READ_ROUTED;
     }
 
     global_proxy_config.config_version++;
@@ -1526,8 +1528,8 @@ int proxy_add_route(THD* thd, config_element_t* ele)
             server2->server = server;
             LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, server2);
             server2->route = router;
-            server2->build_connection = true;
-            server->routed = true;
+            // server2->build_connection = true;
+            server->routed |= ROUTED_TYPE::READ_ROUTED;
             break;
         }
         else if (ele->type == ROUTER_TYPE_RW && router->router_type == ROUTER_TYPE_RW)
@@ -1537,8 +1539,8 @@ int proxy_add_route(THD* thd, config_element_t* ele)
             server2->server = server;
             LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, server2);
             server2->route = router;
-            server2->build_connection = true;
-            server->routed = true;
+            // server2->build_connection = true;
+            server->routed |= ROUTED_TYPE::WRITE_ROUTED;
             break;
         }
 
@@ -1550,14 +1552,17 @@ int proxy_add_route(THD* thd, config_element_t* ele)
         proxy_server_t* server2 =
             (proxy_server_t*)my_malloc(sizeof(proxy_server_t), MY_ZEROFILL);
         server2->server = server;
-        if (ele->type == ROUTER_TYPE_RO)
-            LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, server2);
-        else if (ele->type == ROUTER_TYPE_RW)
-            LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, server2);
+        if (ele->type == ROUTER_TYPE_RO) {
+          LIST_ADD_LAST(link, global_proxy_config.ro_server_lst, server2);
+          server->routed |= ROUTED_TYPE::READ_ROUTED;
+        } else if (ele->type == ROUTER_TYPE_RW) {
+          LIST_ADD_LAST(link, global_proxy_config.rw_server_lst, server2);
+          server->routed |= ROUTED_TYPE::WRITE_ROUTED;
+        }
 
         server2->route = router;
-        server2->build_connection = true;
-        server->routed = true;
+        // server2->build_connection = true;
+        // server->routed = true;
     }
 
     global_proxy_config.config_version++;
@@ -1591,7 +1596,7 @@ int proxy_add_server(THD* thd, config_element_t* ele)
     server->current_weight = server->weight;
     server->max_slave_lag = ele->max_connections;
     server->server_status = SERVER_STATUS_OFFLINE;
-    server->reconnect = true;
+    // server->reconnect = true;
     LIST_ADD_LAST(link, global_proxy_config.server_lst, server);
 
     router = LIST_GET_FIRST(global_proxy_config.router_lst);
@@ -1714,10 +1719,11 @@ int proxy_set_server_status(THD* thd, config_element_t* ele)
         server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
         while (server)
         {
-            if (server->server->server_status == SERVER_STATUS_ONLINE)
-                online_sum ++;
+          if (server->server->server_status == SERVER_STATUS_ONLINE &&
+              WITH_WRITE_ROUTED(server->server->routed))
+            online_sum++;
 
-            server = LIST_GET_NEXT(link, server);
+          server = LIST_GET_NEXT(link, server);
         }
     }
 
@@ -1738,7 +1744,7 @@ int proxy_set_server_status(THD* thd, config_element_t* ele)
                     if (online_sum == 0)
                     {
                         server->server->server_status = SERVER_STATUS_ONLINE;
-                        server->server->reconnect = true;
+                        // server->server->reconnect = true;
                     }
                     else if (online_sum >= 1)
                     {
@@ -1757,11 +1763,11 @@ int proxy_set_server_status(THD* thd, config_element_t* ele)
             else
             {
                 /* multi write node mode */
-                if (//server->server->server_status == SERVER_STATUS_OFFLINE &&
-                    ele->sub_command == CFG_CMD_ONLINE_SERVER)
-                {
-                    server->server->reconnect = true;
-                }
+                // if (//server->server->server_status == SERVER_STATUS_OFFLINE &&
+                //     ele->sub_command == CFG_CMD_ONLINE_SERVER)
+                // {
+                //     server->server->reconnect = true;
+                // }
 
                 server->server->server_status = ele->sub_command == CFG_CMD_OFFLINE_SERVER ?
                   SERVER_STATUS_OFFLINE : SERVER_STATUS_ONLINE;
@@ -1779,11 +1785,11 @@ int proxy_set_server_status(THD* thd, config_element_t* ele)
         if (!strcasecmp(ele->server_name, server->server->server_name))
         {
             /* set offline for write online server */
-            if (//server->server->server_status == SERVER_STATUS_OFFLINE &&
-                ele->sub_command == CFG_CMD_ONLINE_SERVER)
-            {
-                server->server->reconnect = true;
-            }
+            // if (//server->server->server_status == SERVER_STATUS_OFFLINE &&
+            //     ele->sub_command == CFG_CMD_ONLINE_SERVER)
+            // {
+            //     server->server->reconnect = true;
+            // }
 
             server->server->server_status = ele->sub_command == CFG_CMD_OFFLINE_SERVER ?
               SERVER_STATUS_OFFLINE : SERVER_STATUS_ONLINE;
@@ -2623,9 +2629,9 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         {
             if (!strcasecmp(serverb->server_name, server->server_name))
             {
-                if (serverb->nowrite_routed && !entered)
+                if (!WITH_WRITE_ROUTED(serverb->routed) && !entered)
                     protocol->store("OFF", system_charset_info);
-                else if (serverb->noread_routed && entered)
+                else if (!WITH_READ_ROUTED(serverb->routed) && entered)
                     protocol->store("OFF", system_charset_info);
                 else
                     protocol->store("ON", system_charset_info);

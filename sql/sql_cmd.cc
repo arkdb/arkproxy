@@ -95,7 +95,6 @@ int proxy_connect_new_server(THD* thd)
 {
     proxy_server_t* server;
     proxy_server_t* server_next;
-    proxy_servers_t* server_backend;
     Security_context *sctx= thd->security_ctx;
     int i;
     backend_conn_t* conn;
@@ -103,10 +102,23 @@ int proxy_connect_new_server(THD* thd)
 
     ip_or_host = (char*)(sctx->ip ? sctx->ip : sctx->host_or_ip);
 
+    for (i = 0; i < thd->read_conn_count; ++i) {
+        conn = thd->read_conn[i];
+        conn->server_flag = false;
+    }
+
+    global_proxy_config.config_read_lock();
+
     server = LIST_GET_FIRST(global_proxy_config.ro_server_lst);
     while (server)
     {
         server_next = LIST_GET_NEXT(link, server);
+        if (server->server->server_status != SERVER_STATUS_ONLINE ||
+            !WITH_READ_ROUTED(server->server->routed)) {
+          server = server_next;
+          continue;
+        }
+
         for (i=0; i< thd->read_conn_count; ++i)
         {
             conn = thd->read_conn[i];
@@ -123,75 +135,87 @@ int proxy_connect_new_server(THD* thd)
         }
 
         /* if the server is not existed, add it and reconnect */
-        if (conn && server->server->server_status == SERVER_STATUS_ONLINE)
-        {
-            if (server->server->reconnect || server->build_connection)
-            {
-                if (proxy_reconnect_server(thd, conn))
-                {
-                    server = server_next;
-                    // login_failed_error(thd);
-                    continue;
-                    // return true;
-                }
-                else
-                {
-                    sql_print_warning("Reconnecting the read server (%s, %d) successfully" ,
-                        server->server->backend_host, server->server->backend_port);
-                    server->build_connection = false;
-                }
-            }
+        if (conn && !conn->conn_inited()) {
+          if (!proxy_reconnect_server(thd, conn)) {
+            sql_print_warning(
+                "Reconnecting the read server (%s, %d) successfully",
+                server->server->backend_host, server->server->backend_port);
+          }
         }
 
         server = server_next;
+    }
+    for (i = 0; i < thd->write_conn_count; ++i) {
+        conn = thd->write_conn[i];
+        conn->server_flag = false;
     }
 
     server = LIST_GET_FIRST(global_proxy_config.rw_server_lst);
     while (server)
     {
         server_next = LIST_GET_NEXT(link, server);
+        if (server->server->server_status != SERVER_STATUS_ONLINE ||
+            !WITH_WRITE_ROUTED(server->server->routed)) {
+          server = server_next;
+          continue;
+        }
+
         for (i=0; i< thd->write_conn_count; ++i)
         {
             conn = thd->write_conn[i];
             if (conn->server == server->server)
                 break;
         }
-
+        /* if i is last, then conn is new connection
+        * else conn is old, if it not inited, then reconnect */
         if (i == thd->write_conn_count)
         {
             conn = add_write_connection(thd, server->server, sctx->external_user, sctx->user,
                 (char*)ip_or_host, server->server->backend_port);
         }
-
-        /* if the server is not existed, add it and reconnect */
-        if (conn && server->server->server_status == SERVER_STATUS_ONLINE)
-        {
-            if (server->server->reconnect || server->build_connection)
-            {
-                if (proxy_reconnect_server(thd, conn))
-                {
-                    server = server_next;
-                    //login_failed_error(thd);
-                    continue;
-                    // return true;
-                }
-                else
-                {
-                    sql_print_warning("Reconnecting the write server (%s, %d) successfully" ,
-                        server->server->backend_host, server->server->backend_port);
-                    server->build_connection = false;
-                }
-            }
+        conn->server_flag = true;
+        if (conn && !conn->conn_inited()) {
+          if (!proxy_reconnect_server(thd, conn)) {
+            sql_print_warning(
+                "Reconnecting the write server (%s, %d) successfully",
+                server->server->backend_host, server->server->backend_port);
+          }
         }
 
         server = server_next;
     }
 
-    server_backend = LIST_GET_FIRST(global_proxy_config.server_lst);
-    while (server_backend)
-    {
-        server_backend->reconnect = false;
-        server_backend = LIST_GET_NEXT(link, server_backend);
+    global_proxy_config.config_unlock();
+
+    int start = 0;
+    int end = thd->read_conn_count - 1;
+    while (start <= end) {
+      conn = thd->read_conn[start];
+      if (conn->server_flag == false) {
+        close_backend_connection(conn);
+        my_free(conn);
+        thd->read_conn[start] = thd->read_conn[end];
+        thd->read_conn[end] = nullptr;
+        end--;
+        thd->read_conn_count--;
+      } else {
+        start++;
+      }
+    }
+    start = 0;
+    end = thd->write_conn_count - 1;
+    while (start <= end) {
+      conn = thd->write_conn[start];
+      if (conn->server_flag == false) {
+        close_backend_connection(conn);
+        my_free(conn);
+        thd->write_conn[start] = thd->write_conn[end];
+        thd->write_conn[end] = nullptr;
+        end--;
+        thd->write_conn_count--;
+      } else {
+        start++;
+      }
     }
 
     return false;
