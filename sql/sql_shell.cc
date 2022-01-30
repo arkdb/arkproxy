@@ -2595,10 +2595,10 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
                          Item_empty_string(thd, "Comments",
                                            USERNAME_CHAR_LENGTH),
                          mem_root);
-    field_list.push_back(new (mem_root)
-                         Item_empty_string(thd, "Routed",
-                                           USERNAME_CHAR_LENGTH),
-                         mem_root);
+    // field_list.push_back(new (mem_root)
+    //                      Item_empty_string(thd, "Routed",
+    //                                        USERNAME_CHAR_LENGTH),
+    //                      mem_root);
     if (protocol->send_result_set_metadata(&field_list,
                                            Protocol::SEND_NUM_ROWS |
                                            Protocol::SEND_EOF))
@@ -2624,21 +2624,21 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
         else
             protocol->store(NULL, system_charset_info);
 
-        serverb = LIST_GET_FIRST(global_proxy_config.server_lst);
-        while (serverb)
-        {
-            if (!strcasecmp(serverb->server_name, server->server_name))
-            {
-                if (!WITH_WRITE_ROUTED(serverb->routed) && !entered)
-                    protocol->store("OFF", system_charset_info);
-                else if (!WITH_READ_ROUTED(serverb->routed) && entered)
-                    protocol->store("OFF", system_charset_info);
-                else
-                    protocol->store("ON", system_charset_info);
-            }
+        // serverb = LIST_GET_FIRST(global_proxy_config.server_lst);
+        // while (serverb)
+        // {
+        //     if (!strcasecmp(serverb->server_name, server->server_name))
+        //     {
+        //         if (!WITH_WRITE_ROUTED(serverb->routed) && !entered)
+        //             protocol->store("OFF", system_charset_info);
+        //         else if (!WITH_READ_ROUTED(serverb->routed) && entered)
+        //             protocol->store("OFF", system_charset_info);
+        //         else
+        //             protocol->store("ON", system_charset_info);
+        //     }
 
-            serverb = LIST_GET_NEXT(link, serverb);
-        }
+        //     serverb = LIST_GET_NEXT(link, serverb);
+        // }
 
         server_node = LIST_GET_NEXT(link, server_node);
         if (server_node == NULL && !entered)
@@ -2661,7 +2661,7 @@ void mysqld_list_backend_routes(THD *thd,const char *user, bool verbose)
             protocol->store((ulonglong) server->backend_port);
             protocol->store("No Routed", system_charset_info);
             protocol->store(NULL, system_charset_info);
-            protocol->store("OFF", system_charset_info);
+            // protocol->store("OFF", system_charset_info);
             protocol->write();
         }
 

@@ -1318,7 +1318,7 @@ add_write_connection(
     strcpy(conn->md5_hash, md5_hash);
     strcpy(conn->host, host);
     if (thd->db)
-        strcpy(conn->db, thd->db);
+        strncpy(conn->db, thd->db, thd->db_length);
     else
         strcpy(conn->db, "");
     conn->port = port;
@@ -1354,7 +1354,7 @@ add_read_connection(
     strcpy(conn->md5_hash, md5_hash);
     strcpy(conn->host, host);
     if (thd->db)
-        strcpy(conn->db, thd->db);
+        strncpy(conn->db, thd->db, thd->db_length);
     else
         strcpy(conn->db, "");
     conn->port = port;
@@ -1401,7 +1401,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     proxy_servers_t* server;
     Security_context *sctx= thd->security_ctx;
     uint net_timeout= 3600*24;
-    bool reconnect= TRUE;
+    bool reconnect= false;
     uint connect_timeout= 5;
     ulong client_flag= CLIENT_REMEMBER_OPTIONS | CLIENT_MULTI_STATEMENTS
                             | CLIENT_MULTI_RESULTS | CLIENT_PS_MULTI_RESULTS 
@@ -1410,7 +1410,7 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     conn->inited = false;
     int err = false;
     if(conn->get_mysql(false)) {
-      DBUG_ASSERT(0);
+    //   DBUG_ASSERT(0);
       sql_print_information("connection is not closed, reset connection");
       MYSQL* old_mysql = (MYSQL *)conn->get_mysql(false);
       conn->set_mysql(NULL);
@@ -1427,10 +1427,9 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     mysql_options(mysql, MYSQL_OPT_RECONNECT, (bool*)&reconnect);
 
     char* db = NULL;
-    if(thd->db && thd->db[0] != '\0') {
-        db = thd->db;
+    if (thd->db && thd->db[0] != '\0' && thd->db_length > 0) {
+      db = thd->db;
     }
-    ARKPROXY_DEBUG_EXECUTE(2, { sql_print_error("[trace log] proxy connect to backend server:%s, host:%s, port:%d",(const char *)sctx->user, (const char *)server->backend_host, server->backend_port); });
     if (!proxy_connect_backend_server(mysql, (const char *)server->backend_host,
                                       thd->main_security_ctx.ip, 
                                       (const char *)sctx->user, NULL, db,
@@ -1684,15 +1683,19 @@ bool proxy_auth_passwd_manager::load_all_auth_passwd(THD *thd, char *user, char 
             }
             while (source_row)
             {
-                proxy_auth_user *auth_user =  new proxy_auth_user();
+              proxy_auth_user *auth_user = new proxy_auth_user();
+              if (source_row[0])
                 strncpy(auth_user->pass, source_row[0], 64);
+              if (source_row[1])
                 strcpy(auth_user->host, source_row[1]);
+              if (source_row[2])
                 strcpy(auth_user->priv, source_row[2]);
+              if (source_row[3])
                 strcpy(auth_user->user, source_row[3]);
-                std::map<std::string, proxy_user_list>::iterator user_in_map = this->proxy_user_map.find(auth_user->user);
-                if (user_in_map != this->proxy_user_map.end())
-                {
-                    user_in_map->second.push_back(auth_user);
+              std::map<std::string, proxy_user_list>::iterator user_in_map =
+                  this->proxy_user_map.find(auth_user->user);
+              if (user_in_map != this->proxy_user_map.end()) {
+                user_in_map->second.push_back(auth_user);
                 }
                 else
                 {
