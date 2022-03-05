@@ -12862,6 +12862,9 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
   }
 
   thd->password= passwd_len > 0;
+  
+  if (db != NULL)
+    thd->set_db(db, db_len);
 
   const char *client_auth_plugin=
     ((st_mysql_auth *) (plugin_decl(mpvio->plugin)->info))->client_auth_plugin;
@@ -12882,8 +12885,8 @@ static ulong parse_client_handshake_packet(MPVIO_EXT *mpvio,
   if (find_mpvio_user(mpvio, passwd))
     return packet_error;
     
-   if (db != NULL)
-     thd->set_db(db, db_len);
+  //  if (db != NULL)
+  //    thd->set_db(db, db_len);
    //set_ark_env_for_connect(thd);
 
 
