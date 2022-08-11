@@ -2540,7 +2540,7 @@ int get_set_var_sql(THD* thd, set_var_base *var, format_cache_node_t* format_nod
         else
         {
 
-            str_append(format_node->format_sql, "set transaction read ");
+            str_append(format_node->format_sql, "set session transaction read ");
 
             if (s_var->value && s_var->value->type() == Item::INT_ITEM)
             {

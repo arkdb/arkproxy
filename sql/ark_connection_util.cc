@@ -1157,8 +1157,7 @@ re_route:
         int can_route = proxy_connection_can_route_read(conn);
         conn->server->current_weight += can_route ? conn->server->weight : 0; //update server's current_weight
         total_weight += can_route ? conn->server->weight : 0;
-        if (can_route && (conn->autocommit || conn->lazy_conn_needed) &&
-            thd->first_request &&
+        if (can_route && conn->autocommit && thd->first_request &&
             conn->server == thd->first_request_best_server) {
           best = conn;
         }
@@ -1203,7 +1202,7 @@ re_route:
         total_weight += can_route ? conn->server->weight : 0;
 
         /* if the conn is not autocommit, then this read node is not routed */
-        if (can_route && (conn->autocommit || conn->lazy_conn_needed) &&
+        if (can_route && conn->autocommit &&
             (best == NULL || conn->current_weight > best->current_weight)) {
           best = conn;
         }
@@ -1406,6 +1405,9 @@ int proxy_reconnect_server(THD* thd, backend_conn_t* conn)
     ulong client_flag= CLIENT_REMEMBER_OPTIONS | CLIENT_MULTI_STATEMENTS
                             | CLIENT_MULTI_RESULTS | CLIENT_PS_MULTI_RESULTS 
                             | CLIENT_MULTI_STATEMENTS;
+    if (thd->client_capabilities | CLIENT_FOUND_ROWS) {
+      client_flag |= CLIENT_FOUND_ROWS;
+    }
 
     conn->inited = false;
     int err = false;
